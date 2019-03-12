@@ -1,0 +1,4 @@
+#TYPE Microsoft.PowerShell.Commands.LocalPrincipal
+"Name","SID","PrincipalSource","ObjectClass"
+"WS\testuser02","S-1-5-21-2281270265-109052308-1789343181-1015","Local","User"
+"WS\testuser03","S-1-5-21-2281270265-109052308-1789343181-1016","Local","User"
