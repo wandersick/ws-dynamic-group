@@ -64,12 +64,14 @@ ForEach ($csvItem in $csvItems) {
         }
         # In case user does not exist in CSV but in system, remove the user from group in system.
         # This won't apply to users who exist in CSV and in system to prevent interruption to the users
+        # Note: The code below may run more than once
+        #       If the user has already been deleted by a previous run, subsequent runs have no effect and output the user cannot be found
         if ($userSysCheck -eq $false) {
             if ($directoryMode -ieq "Local") {
                 # Retired: net localgroup `"$csvGroupname`" `"$sysGroupMember`" /del 
-                Remove-LocalGroupMember -Group "$csvGroupname" -Member "$sysGroupMember"
+                Remove-LocalGroupMember -Group `"$csvGroupname`" -Member `"$sysGroupMember`"
             } elseif ($directoryMode -ieq "Domain") {
-                Remove-ADGroupMember -Identity "$csvGroupname" -Members "$sysGroupMember"
+                Remove-ADGroupMember -Identity `"$csvGroupname`" -Members `"$sysGroupMember`"
             }
         }
     }
@@ -79,9 +81,9 @@ ForEach ($csvItem in $csvItems) {
      # "System error 1378 has occurred." "The specified account name is already a member of the group"
      if ($directoryMode -ieq "Local") {
         # Retired: net localgroup `"$csvGroupname`" `"$csvUsername`" /add
-        Add-LocalGroupMember -Group "$csvGroupname" -Member "$sysGroupMember"
+        Add-LocalGroupMember -Group `"$csvGroupname`" -Member `"$csvUsername`"
     } elseif ($directoryMode -ieq "Domain") {
-        Add-ADGroupMember -Identity "$csvGroupname" -Members "$sysGroupMember"
+        Add-ADGroupMember -Identity `"$csvGroupname`" -Members `"$csvUsername`"
     }
     
 }
