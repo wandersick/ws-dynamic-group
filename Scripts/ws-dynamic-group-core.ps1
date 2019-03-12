@@ -72,7 +72,7 @@ ForEach ($csvItem in $csvItems) {
                 net localgroup `"$csvGroupname`" `"$sysGroupMember`" /del 
             } elseif ($directoryMode -ieq "Domain") {
                 # Todo*: Remove-ADGroupMember -Identity "" -Members ""
-                net group `"$csvGroupname`" `"$sysGroupMember`" /del 
+                net group `"$csvGroupname`" `"$sysGroupMemberName`" /del
             }
         }
     }
