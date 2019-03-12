@@ -1,5 +1,18 @@
+# Name: ws-dynamic-group
+# Version: 1.0
+# Author: wandersick
+
+# Descriptions: Run as a scheduled task to monitor a flat file (CSV) for additions or removal of users in one or more groups
+#               Apply the changes to system accordingly, locally or on a domain controller (Active Directory)
+#               (Note: Current version aims to just 'do the job'. It could use workarounds here and there, and performance is not its priority now)
+# More Details: https://github.com/wandersick/ws-dynamic-group
+
+# ---------------------------------------------------------------------------------
+
+# [Editable Settings]
+
 # Script directory
-# Example: c:\ws-dynamic-group
+# Example: c:\ws-dynamic-group where this script can be located at c:\ws-dynamic-group\Scripts\ws-dynamic-group-core.ps1
 $scriptDir = "c:\ws-dynamic-group"
 
 # CSV filename to process
@@ -11,6 +24,10 @@ $directoryMode = "Local"
 # Create a new directory by randomizing a unique value made up of day time.
 # Example: 20190227_095047AM
 $currentDateTime = Get-Date -format "yyyyMMdd_hhmmsstt"
+
+# ---------------------------------------------------------------------------------
+
+# [Main Body of Script]
 
 # Move 01_Incoming\incoming.csv to a directory of ransomized name inside 02_Processing
 New-Item "$scriptDir\02_Processing\$currentDateTime" -Force -ItemType "directory"
