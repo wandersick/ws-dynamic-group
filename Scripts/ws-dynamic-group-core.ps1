@@ -99,3 +99,6 @@ ForEach ($csvItem in $csvItems) {
 # Move processed folder to 03_Done
 Copy-Item "$scriptDir\02_Processing\$currentDateTime\" "$scriptDir\03_Done\$currentDateTime\" -Recurse -Force
 Remove-Item "$scriptDir\02_Processing\$currentDateTime\" -Recurse -Force
+
+# Write dummy file to 'Processed' folder to signal completion of script
+Write-Output "The existence of this file indicates the script has been run until the end." | Out-File "$scriptDir\03_Done\$currentDateTime\Completed"
