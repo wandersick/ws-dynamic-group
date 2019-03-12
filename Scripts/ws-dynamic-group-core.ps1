@@ -5,7 +5,7 @@ $scriptDir = "c:\ws-dynamic-group"
 # CSV filename to process
 $csvFile = "incoming.csv"
 
-# 'Local' (workgroup) or 'Domain' mode - this scripts support workgroup mode where local group would be enumerated
+# 'Local' (workgroup) or 'Domain' mode - this scripts support local (workgroup) mode where local group would be enumerated, or domain mode which is only supported to be run on a domain controller (RSAT is unsupported due to the use of "net group" command)
 $directoryMode = "Local"
 
 # Create a new directory by randomizing a unique value made up of day time.
@@ -68,10 +68,11 @@ ForEach ($csvItem in $csvItems) {
         #       If the user has already been deleted by a previous run, subsequent runs have no effect and output the user cannot be found
         if ($userSysCheck -eq $false) {
             if ($directoryMode -ieq "Local") {
-                # Retired: net localgroup `"$csvGroupname`" `"$sysGroupMember`" /del 
-                Remove-LocalGroupMember -Group `"$csvGroupname`" -Member `"$sysGroupMember`"
+                # Todo*: Remove-LocalGroupMember -Group "" -Member ""
+                net localgroup `"$csvGroupname`" `"$sysGroupMember`" /del 
             } elseif ($directoryMode -ieq "Domain") {
-                Remove-ADGroupMember -Identity `"$csvGroupname`" -Members `"$sysGroupMember`"
+                # Todo*: Remove-ADGroupMember -Identity "" -Members ""
+                net group `"$csvGroupname`" `"$sysGroupMember`" /del 
             }
         }
     }
@@ -80,10 +81,13 @@ ForEach ($csvItem in $csvItems) {
      # This also applies to users who already exist in CSV and in system, so there can be harmless error messages that can be safely ignored:
      # "System error 1378 has occurred." "The specified account name is already a member of the group"
      if ($directoryMode -ieq "Local") {
-        # Retired: net localgroup `"$csvGroupname`" `"$csvUsername`" /add
-        Add-LocalGroupMember -Group `"$csvGroupname`" -Member `"$csvUsername`"
+        # Todo*: Add-LocalGroupMember -Group "" -Member ""
+        net localgroup `"$csvGroupname`" `"$csvUsername`" /add
     } elseif ($directoryMode -ieq "Domain") {
-        Add-ADGroupMember -Identity `"$csvGroupname`" -Members `"$csvUsername`"
+        # Todo*: Add-ADGroupMember -Identity "" -Members ""
+        net group `"$csvGroupname`" `"$csvUsername`" /add
+        # *A workaround is currently in use to acquire correct variable content as `"...`". This requires traditional CLI commands
+        #  Although this works, I left it as a todo for this part to be written in PowerShell without the workaround
     }
     
 }
