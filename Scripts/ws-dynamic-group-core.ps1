@@ -1,35 +1,97 @@
 # Name: ws-dynamic-group
-# Version: 1.0
+# Version: 1.1
 # Author: wandersick
 
-# Descriptions: Run as a scheduled task to monitor a flat file (CSV) for additions or removal of users in one or more groups
+# Descriptions: Monitor a flat file (CSV) for additions or removal of users in one or more groups (run as a scheduled task)
 #               Apply the changes to system accordingly, locally or on a domain controller (Active Directory)
-#               (Note: Current version aims to just 'do the job'. It could use workarounds here and there, and performance is not its priority now)
+#               (Current version aims to 'do the job'. It could use workarounds here and there. Performance is not its priority)
 # More Details: https://github.com/wandersick/ws-dynamic-group
 
 # ---------------------------------------------------------------------------------
 
 # [Editable Settings]
 
+# ------- General Settings -------
+
 # Script directory
-# Example: c:\ws-dynamic-group where this script can be located at c:\ws-dynamic-group\Scripts\ws-dynamic-group-core.ps1
+# - Determine the working directory of the script and the relative path
+# - Tip: If multiple instances are required, create copies of the script folder structure and set each scriptDir to be:
+#   - Example 1: "c:\ws-dynamic-group\1" (where this script can be located at c:\ws-dynamic-group\Scripts\1\ws-dynamic-group-core.ps1)
+#   - Example 2: "c:\ws-dynamic-group\2" (and so on)
 $scriptDir = "c:\ws-dynamic-group"
 
-# CSV filename to process
-$csvFile = "incoming.csv"
-
-# 'Local' (workgroup) or 'Domain' mode - this scripts support local (workgroup) mode where local group would be enumerated, or domain mode which is only supported to be run on a domain controller (RSAT is unsupported due to the use of "net group" command)
-$directoryMode = "Local"
-
-# Create a new directory by randomizing a unique value made up of day time.
-# Example: 20190227_095047AM
+# Format of date and time 
+# - Used for uniquely naming and creating a new directory on each run by randomizing a value made up of day time
+# - Example: Get-Date -format "yyyyMMdd_hhmmsstt" (e.g. "20190227_095047AM")
 $currentDateTime = Get-Date -format "yyyyMMdd_hhmmsstt"
+
+# ------- Settings - Input Source -------
+
+# Input mode
+# - Either case-insensitive 'static' (CSV) or 'dynamic' (LDAP)
+#   - Static: Acquire CSV file precreated and pre-inputted by user in 01_Incoming directory
+#   - Dynamic: Also ends up being a CSV file, but generated live via a LDAP filter from current Active Directory domain 
+# - Note: dynamic LDAP input mode automatically assumes 'Domain' and overrides 'Local' directory Mode
+# - Example 1: $inputMode = "Dynamic"
+# - Example 2: $inputMode = "Static"
+$inputMode = "Dynamic"
+
+    # Directory mode (for both input modes)
+    # - Determine whether to interact with local (workgroup) or domain (AD) authentication provider
+    # - Either case-insensitive 'Local' or 'Domain'
+    #   - 'Local' (workgroup) directory mode where local group would be enumerated,
+    #   - 'Domain' directory mode which is only supported to be run on a domain controller
+    # - Note: If input mode is set to dynamic (LDAP), this has no effect and is automatically assumed to be "Domain"
+    # - Example 1: $directoryMode = "Local"
+    # - Example 2: $directoryMode = "Domain"
+    $directoryMode = "Local"
+
+    # ------- Settings - Dynamic Input Mode -------
+
+    # LDAP filter
+    # - Acquire a list of users from AD domain to generate a CSV file for further processing (used by dynamic LDAP input mode)
+    # - Example 1: (samAccountName=s9999*)
+    # - Example 2: ((mailNickname=id*)(whenChanged>=20180101000000.0Z))(|(userAccountControl=514))(|(memberof=CN=VIP,OU=Org,DC=test,DC=com)))
+    $ldapFilter = ""
+
+    # ------- Settings - Static Input Mode -------
+
+    # CSV filename
+    # - For processing inside 01_Incoming folder (used by static CSV input mode)
+    # - Example: $csvFile = "incoming.csv"
+    $csvFile = "incoming.csv"
+
+# ------- Settings - Group Name Source -------
+
+# Enable or disable custom group name feature - $true (enabled) or $false (disabled)
+# - Determine how to acquire the group name
+#   - If enabled, below $customGroupName is the group name and takes precedence over the CSV (if group name is defined in the CSV or not)
+#   - If disabled, group name is acquired from CSV file (static input mode only)
+# - If input mode is set to dynamic (LDAP), customGroup is automatically $true whatever input mode is set
+# - Example: $customGroup = $false
+$customGroup = $false
+
+    # Custom group name (see above)
+    # - One group name can be specified here in the script instead of CSV
+    # - Supported for both dynamic LDAP input mode and static CSV input mode
+    #   - For dynamic LDAP input mode, the only way to define group name is here
+    #   - For static CSV input mode, it can be defined both here or manually in CSV
+    # Example: $customGroupName = "tutors" 
+    $customGroupName = "tutors"
 
 # ---------------------------------------------------------------------------------
 
 # [Main Body of Script]
 
-# Move 01_Incoming\incoming.csv to a directory of ransomized name inside 02_Processing
+# In static 'LDAP' input mode, it automatically assumes 'Domain' and overrides 'Local' directoryMode (if configured); likewise for customGroup
+If ($inputMode -ieq 'Dynamic') {
+    $directoryMode = "Domain"
+    $customGroup = $true 
+    # Generate CSV from AD domain by running specified LDAP filter, adding 'Username' (literally) to the top row
+    Get-ADUser -LDAPFilter "$ldapFilter" | Select-Object SamAccountName | ConvertTo-CSV -NoTypeInformation -Delimiter "," | ForEach-Object {$_ -replace '"',''} | ForEach-Object {$_ -replace 'SamAccountName','Username'} > "$scriptDir\01_Incoming\$csvFile" 
+}
+
+# Move 01_Incoming\incoming.csv to a directory of randomized name inside 02_Processing
 New-Item "$scriptDir\02_Processing\$currentDateTime" -Force -ItemType "directory"
 Copy-Item "$scriptDir\01_Incoming\$csvFile" "$scriptDir\02_Processing\$currentDateTime\$csvFile" -Force
 Remove-Item "$scriptDir\01_Incoming\$csvFile" -force 
@@ -40,19 +102,34 @@ $csvItems = import-csv "$scriptDir\02_Processing\$currentDateTime\$csvFile"
 $csv2Items = import-csv "$scriptDir\02_Processing\$currentDateTime\$csvFile"
 
 # Backup existing group members to a log file (Output File: GroupMemberBefore_GroupName.csv)
-ForEach ($csvItem in $csvItems) {
-    $csvGroupname = $($csvItem.groupname)
+If ($customGroup -eq $true) {
+    $csvGroupname = $customGroupName
     if ($directoryMode -ieq "Local") {
         Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberBefore_$csvGroupname.csv" -Force
     } elseif ($directoryMode -ieq "Domain") {
         Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv" -Force 
     }
+} else {
+    ForEach ($csvItem in $csvItems) {
+        $csvGroupname = $($csvItem.groupname)
+        if ($directoryMode -ieq "Local") {
+            Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberBefore_$csvGroupname.csv" -Force
+        } elseif ($directoryMode -ieq "Domain") {
+            Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv" -Force 
+        }
+    }
 }
 
-# Enumberate each line from CSV
+# Enumerate each line from CSV
 ForEach ($csvItem in $csvItems) {
     $csvUsername = $($csvItem.username)
-    $csvGroupname = $($csvItem.groupname)
+    # If customGroup is enabled and group name is defined at the top of the script, acquire the group name there;
+    # Otherwise, acquire it from CSV (more than one group names are supported if CSV)
+    If ($customGroup -eq $true) {
+        $csvGroupname = $customGroupName
+    } else {
+        $csvGroupname = $($csvItem.groupname)
+    }
 
     # For the group being processed, acquire existing group members from it in current system into an array
     if ($directoryMode -ieq "Local") {
@@ -110,12 +187,21 @@ ForEach ($csvItem in $csvItems) {
 }
 
 # Record final group members to a log file (Output File: GroupMemberAfter_GroupName.csv)
-ForEach ($csvItem in $csvItems) {
-    $csvGroupname = $($csvItem.groupname)
+If ($customGroup -eq $true) {
+    $csvGroupname = $customGroupName
     if ($directoryMode -ieq "Local") {
         Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberAfter_$csvGroupname.csv" -Force
     } elseif ($directoryMode -ieq "Domain") {
         Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberAfter_$csvGroupname.csv" -Force
+    }
+} else {
+    ForEach ($csvItem in $csvItems) {
+        $csvGroupname = $($csvItem.groupname)
+        if ($directoryMode -ieq "Local") {
+            Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberAfter_$csvGroupname.csv" -Force
+        } elseif ($directoryMode -ieq "Domain") {
+            Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberAfter_$csvGroupname.csv" -Force
+        }
     }
 }
 
