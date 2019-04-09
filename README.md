@@ -187,7 +187,10 @@ $customGroup = $false
 
 * Version 1.2 - 20190409
     * Performance enhancement
-    * Script has been separated into three sections which can be optionally enabled: Backup (Before), Main Logic and Backup (After). For performance reasons, only Main Logic is enabled by default
+    * Script has been separated into three sections which can be optionally enabled: Backup (Before), Main Logic and Backup (After). For performance reasons, only
+      * Main Logic is enabled by default
+    * Within Main Logic, more granularity is achieved by further separating it into User Addition and User Deletion. Each of them can be enabled and run sequentially or in parallel as required
+      * For example, two sets of the script with similar settings, with the only difference being set A having userAddition enabled and set B having userDeletion disabled, may be run in parallel to speed up user addition and deletion
 
 * Version 1.1 - 20190315
     * Besides already supported method of statically creating CSV input file, dynamic LDAP input mode is now supported, where incoming.csv is generated according to a LDAP query specified in the script, live from current Active Directory domain

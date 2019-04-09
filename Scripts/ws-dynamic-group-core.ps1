@@ -29,6 +29,8 @@ $currentDateTime = Get-Date -format "yyyyMMdd_hhmmsstt"
 # 
 $backupBefore = $false # Backup existing group members to a log file (Output File: GroupMemberBefore_GroupName.csv)
 $mainLogic = $true # Perform the main function of the script
+    $userAddition = $true # Perform user addition for each user that is in CSV but not in system
+    $userDeletion = $true # Perform user deletion for each user that is in system but not in CSV
 $backupAfter = $false # Record final group members to a log file (Output File: GroupMemberAfter_GroupName.csv)
 
 # ------- Settings - Input Source -------
@@ -74,6 +76,7 @@ $inputMode = "Static"
 #   - If enabled, below $customGroupName is the group name and takes precedence over the CSV (if group name is defined in the CSV or not)
 #   - If disabled, group name is acquired from CSV file (static input mode only)
 # - If input mode is set to dynamic (LDAP), customGroup is automatically $true whatever input mode is set
+# - Custom group is unsupported for deletion (the feature is deprecated); for deletion, custom group is true always
 # - Example: $customGroup = $false
 $customGroup = $true
 
@@ -147,17 +150,66 @@ if ($backupBefore -eq $true) {
 # [ Main Logic ] 
 # -------------------------------------------------------------------------------------------
 
+# [ User Addition ] 
+ 
 # Enumerate each line from CSV
 if ($mainLogic -eq $true) {
-    ForEach ($csvItem in $csvItems) {
-        $csvUsername = $($csvItem.username)
-        # If customGroup is enabled and group name is defined at the top of the script, acquire the group name there;
-        # Otherwise, acquire it from CSV (more than one group names are supported if CSV)
-        If ($customGroup -eq $true) {
-            $csvGroupname = $customGroupName
-        } else {
-            $csvGroupname = $($csvItem.groupname)
+    if ($userAddition -eq $true) {
+        ForEach ($csvItem in $csvItems) {
+            $csvUsername = $($csvItem.username)
+            # If customGroup is enabled and group name is defined at the top of the script, acquire the group name there;
+            # Otherwise, acquire it from CSV (more than one group names are supported if CSV)
+            If ($customGroup -eq $true) {
+                $csvGroupname = $customGroupName
+            } else {
+                $csvGroupname = $($csvItem.groupname)
+            }
+
+            # For the group being processed, acquire existing group members from it in current system into an array
+            if ($directoryMode -ieq "Local") {
+                $sysGroupMembers = Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember
+            } elseif ($directoryMode -ieq "Domain") {
+                $sysGroupMembers = Get-ADGroup "$csvGroupname" | Get-ADGroupMember
+            }
+
+            # Enumerate group members of the group from current system
+            # For each username in CSV, compare with group member in current system
+            $userToAdd = $true
+            ForEach ($sysGroupMember in $sysGroupMembers) {           
+                $sysGroupMemberName = $($sysGroupMember.name).split("\\")[-1]
+                if ($sysGroupMemberName -eq $csvUsername) {
+                    # User already exists in system and CSV
+                    $userToAdd = $false
+                }
+            }
+
+            # Perform user addition action on user and group
+
+            # This does not apply to users who already exist in CSV and in system, so there is no longer error messages as follows:
+            # "System error 1378 has occurred." "The specified account name is already a member of the group"
+            if ($userToAdd -eq $true) {
+                if ($directoryMode -ieq "Local") {
+                    # Todo*: Add-LocalGroupMember -Group "" -Member ""
+                    net localgroup `"$csvGroupname`" `"$csvUsername`" /add
+                } elseif ($directoryMode -ieq "Domain") {
+                    # Todo*: Add-ADGroupMember -Identity "" -Members ""
+                    net group `"$csvGroupname`" `"$csvUsername`" /add
+                    # *A workaround is currently in use to acquire correct variable content as `"...`". This requires traditional CLI commands
+                    #  Although this works, I left it as a todo for this part to be written in PowerShell without the workaround
+                }
+            }
+            
         }
+    }
+}
+
+# [ User Deletion ] 
+
+# Enumerate group members of the group from current system
+if ($mainLogic -eq $true) {
+    if ($userDeletion -eq $true) {
+        # Acquire the group name from top of script (custom group is unsupported for deletion; hence, it is true always)
+        $csvGroupname = $customGroupName
 
         # For the group being processed, acquire existing group members from it in current system into an array
         if ($directoryMode -ieq "Local") {
@@ -165,48 +217,39 @@ if ($mainLogic -eq $true) {
         } elseif ($directoryMode -ieq "Domain") {
             $sysGroupMembers = Get-ADGroup "$csvGroupname" | Get-ADGroupMember
         }
-
-        # Enumberate group members of the group from current system
-        # For each username in CSV, compare with group member in current system
-        $userSysCheck = $false
-        ForEach ($sysGroupMember in $sysGroupMembers) {           
-            $sysGroupMemberName = $($sysGroupMember.name).split("\\")[-1]
-            $csv2Username = $($csvItem.username)
-            if ($sysGroupMemberName -eq $csv2Username) {
-                # User exists in system and CSV
-                $userSysCheck = $true
-            }
-        }
-        # DELETE existing users in system not found in CSV
-        # In case user does not exist in CSV but in system, remove the user from group in system.
-        # This won't apply to users who exist in CSV and in system to prevent interruption to the users
-        # Note: The code below may run more than once
-        #       If the user has already been deleted by a previous run, subsequent runs have no effect and output the user cannot be found
-        if ($userSysCheck -eq $false) {
-            if ($directoryMode -ieq "Local") {
-                # Todo*: Remove-LocalGroupMember -Group "" -Member ""
-                net localgroup `"$csvGroupname`" `"$sysGroupMember`" /del 
-            } elseif ($directoryMode -ieq "Domain") {
-                # Todo*: Remove-ADGroupMember -Identity "" -Members ""
-                net group `"$csvGroupname`" `"$sysGroupMemberName`" /del
-            }
-        }
-        # Perform usersadd action on user and group
-
-        # This also applies to users who already exist in CSV and in system, so there can be harmless error messages that can be safely ignored:
-        # "System error 1378 has occurred." "The specified account name is already a member of the group"
-        if ($directoryMode -ieq "Local") {
-            # Todo*: Add-LocalGroupMember -Group "" -Member ""
-            net localgroup `"$csvGroupname`" `"$csvUsername`" /add
-        } elseif ($directoryMode -ieq "Domain") {
-            # Todo*: Add-ADGroupMember -Identity "" -Members ""
-            net group `"$csvGroupname`" `"$csvUsername`" /add
-            # *A workaround is currently in use to acquire correct variable content as `"...`". This requires traditional CLI commands
-            #  Although this works, I left it as a todo for this part to be written in PowerShell without the workaround
-        }
         
+        ForEach ($sysGroupMember in $sysGroupMembers) {
+            $sysGroupMemberName = $($sysGroupMember.name).split("\\")[-1]
+
+            # Enumerate group members of the group from CSV
+            # For each username in system, compare with group member in CSV
+            $userToKeep = $false
+            ForEach ($csvItem in $csvItems) {
+                $csvUsername = $($csvItem.username)
+                if ($csvUsername -eq $sysGroupMemberName) {
+                    # User already exists in CSV and system
+                    $userToKeep = $true
+                }
+            }
+
+            # Perform user deletion action on user and group
+
+            # DELETE existing users in system not found in CSV
+            # In case user does not exist in CSV but in system, remove the user from group in system.
+            # This won't apply to users who exist in CSV and in system to prevent interruption to the users
+            if ($userToKeep -eq $false) {
+                if ($directoryMode -ieq "Local") {
+                    # Todo*: Remove-LocalGroupMember -Group "" -Member ""
+                    net localgroup `"$csvGroupname`" `"$sysGroupMember`" /del 
+                } elseif ($directoryMode -ieq "Domain") {
+                    # Todo*: Remove-ADGroupMember -Identity "" -Members ""
+                    net group `"$csvGroupname`" `"$sysGroupMemberName`" /del
+                }
+            }
+        }
     }
 }
+
 
 # Write dummy file to 'Processed' folder to signal completion of main logic
 if ($mainLogic -eq $true) {
