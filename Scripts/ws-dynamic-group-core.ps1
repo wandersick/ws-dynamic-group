@@ -107,8 +107,6 @@ Remove-Item "$scriptDir\01_Incoming\$csvFile" -force
 if ($mainLogic -eq $true) {
     # Import users and groups from CSV into an array
     $csvItems = import-csv "$scriptDir\02_Processing\$currentDateTime\$csvFile"
-    # Alternative varaible for user deletion in sub-function
-    $csv2Items = $csvItems 
 }
 
 # -------------------------------------------------------------------------------------------
@@ -167,34 +165,27 @@ if ($mainLogic -eq $true) {
 
         # Enumberate group members of the group from current system
         # For each username in CSV, compare with group member in current system
-        ForEach ($sysGroupMember in $sysGroupMembers) {
-            $userSysCheck = $false
+        $userSysCheck = $false
+        ForEach ($sysGroupMember in $sysGroupMembers) {           
             $sysGroupMemberName = $($sysGroupMember.name).split("\\")[-1]
-            # Enumberate users from CSV (alternative variable) and DELETE existing users in system not found in CSV
-            ForEach ($csv2Item in $csv2Items) {
-                $csv2Username = $($csv2Item.username)
-    
-                if ($sysGroupMemberName -eq $csv2Username) {
-                    $userSysCheck = $true
-                }
-    
-                if ($userSysCheck -eq $true) {
-                    # Break out of the ForEach loop if true to prevent from needless further processing
-                    Break
-                }
+            $csv2Username = $($csvItem.username)
+            if ($sysGroupMemberName -eq $csv2Username) {
+                # User exists in system and CSV
+                $userSysCheck = $true
             }
-            # In case user does not exist in CSV but in system, remove the user from group in system.
-            # This won't apply to users who exist in CSV and in system to prevent interruption to the users
-            # Note: The code below may run more than once
-            #       If the user has already been deleted by a previous run, subsequent runs have no effect and output the user cannot be found
-            if ($userSysCheck -eq $false) {
-                if ($directoryMode -ieq "Local") {
-                    # Todo*: Remove-LocalGroupMember -Group "" -Member ""
-                    net localgroup `"$csvGroupname`" `"$sysGroupMember`" /del 
-                } elseif ($directoryMode -ieq "Domain") {
-                    # Todo*: Remove-ADGroupMember -Identity "" -Members ""
-                    net group `"$csvGroupname`" `"$sysGroupMemberName`" /del
-                }
+        }
+        # DELETE existing users in system not found in CSV
+        # In case user does not exist in CSV but in system, remove the user from group in system.
+        # This won't apply to users who exist in CSV and in system to prevent interruption to the users
+        # Note: The code below may run more than once
+        #       If the user has already been deleted by a previous run, subsequent runs have no effect and output the user cannot be found
+        if ($userSysCheck -eq $false) {
+            if ($directoryMode -ieq "Local") {
+                # Todo*: Remove-LocalGroupMember -Group "" -Member ""
+                net localgroup `"$csvGroupname`" `"$sysGroupMember`" /del 
+            } elseif ($directoryMode -ieq "Domain") {
+                # Todo*: Remove-ADGroupMember -Identity "" -Members ""
+                net group `"$csvGroupname`" `"$sysGroupMemberName`" /del
             }
         }
         # Perform usersadd action on user and group
