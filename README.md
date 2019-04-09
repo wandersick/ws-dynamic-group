@@ -48,7 +48,7 @@ testtutor02[,tutors]
 ```
 
 Note:
-* The top row (header) has to be Username, Groupname (the latter is optional)
+* The top row (header) has to be Username (Groupname is optional and deprecated to be specifed via CSV. Specify it at the top of the script file instead)
 * If group name is specified at the top of the script (i.e. at the [Settings](#Settings) section), it takes precedence. Any group name defined in the CSV has no effect
   * Only one group name is supported as defined at the top of the script
   * For static input mode, multiple group names can be defined in CSV if custom group name feature is disabled (set to false)
@@ -70,12 +70,15 @@ C:\ws-dynamic-group
 ├───03_Done
 │   │
 │   └───20190312_030304PM
-│           Completed
+│           Completed // indication of completion of script
+|           Completed_Backup_(Before) // indication of completion of script section: Backup (before)
+|           Completed_Main_Logic // indication of completion of script section: Main Logic
+|           Completed_Backup_(After) // indication of completion of script section: Backup (After)
 │           incoming.csv
-│           LocalGroupMemberAfter_full-time students.csv
-│           LocalGroupMemberAfter_tutors.csv
-│           LocalGroupMemberBefore_full-time students.csv
-│           LocalGroupMemberBefore_tutors.csv
+│           Domain|LocalGroupMemberAfter_full-time students.csv // optional: if enabled ($backupAfter is $true)
+│           Domain|LocalGroupMemberAfter_tutors.csv // optional: as above
+│           Domain|LocalGroupMemberBefore_full-time students.csv // optional: if enabled ($backupBefore is $true)
+│           Domain|LocalGroupMemberBefore_tutors.csv // optional: as above
 │
 └───Scripts
         ws-dynamic-group-core.ps1
@@ -119,6 +122,12 @@ $scriptDir = "c:\ws-dynamic-group"
 # - Example: Get-Date -format "yyyyMMdd_hhmmsstt" (e.g. "20190227_095047AM")
 $currentDateTime = Get-Date -format "yyyyMMdd_hhmmsstt"
 
+# ------- Section(s) of Script to Run -------
+# 
+$backupBefore = $false # Backup existing group members to a log file (Output File: GroupMemberBefore_GroupName.csv)
+$mainLogic = $true # Perform the main function of the script
+$backupAfter = $false # Record final group members to a log file (Output File: GroupMemberAfter_GroupName.csv)
+
 # ------- Settings - Input Source -------
 
 # Input mode
@@ -144,7 +153,7 @@ $inputMode = "Dynamic"
 
     # LDAP filter
     # - Acquire a list of users from AD domain to generate a CSV file for further processing (used by dynamic LDAP input mode)
-    # - Example 1: (samUserAccount=s9999*)
+    # - Example 1: (samAccountName=s9999*)
     # - Example 2: ((mailNickname=id*)(whenChanged>=20180101000000.0Z))(|(userAccountControl=514))(|(memberof=CN=VIP,OU=Org,DC=test,DC=com)))
     $ldapFilter = ""
 
@@ -176,6 +185,10 @@ $customGroup = $false
 
 # Release Notes
 
+* Version 1.2 - 20190409
+    * Performance enhancement
+    * Script has been separated into three sections which can be optionally enabled: Backup (Before), Main Logic and Backup (After). For performance reasons, only Main Logic is enabled by default
+
 * Version 1.1 - 20190315
     * Besides already supported method of statically creating CSV input file, dynamic LDAP input mode is now supported, where incoming.csv is generated according to a LDAP query specified in the script, live from current Active Directory domain
 
@@ -190,4 +203,5 @@ $customGroup = $false
   * For example, the below sets of the script (scriptDir) can be created, each scheduled to run as required
     * C:\ws-dynamic-group\1, C:\ws-dynamic-group\2, C:\ws-dynamic-group\3...
 * The script may be scheduled using built-in Task Scheduler of Windows or any other preferred way of start-up
+* If Backup (Before) and Backup (After) are required but it is undesired to run them along with the Main Logic (increases processing time), a separate script may be used and scheduled solely for the Backup sections to run separately
 
