@@ -104,10 +104,12 @@ New-Item "$scriptDir\02_Processing\$currentDateTime" -Force -ItemType "directory
 Copy-Item "$scriptDir\01_Incoming\$csvFile" "$scriptDir\02_Processing\$currentDateTime\$csvFile" -Force
 Remove-Item "$scriptDir\01_Incoming\$csvFile" -force 
 
-# Import users and groups from CSV into an array
-$csvItems = import-csv "$scriptDir\02_Processing\$currentDateTime\$csvFile"
-# Alternative, for user deletion in sub-function
-$csv2Items = import-csv "$scriptDir\02_Processing\$currentDateTime\$csvFile"
+if ($mainLogic -eq $true) {
+    # Import users and groups from CSV into an array
+    $csvItems = import-csv "$scriptDir\02_Processing\$currentDateTime\$csvFile"
+    # Alternative varaible for user deletion in sub-function
+    $csv2Items = $csvItems 
+}
 
 # -------------------------------------------------------------------------------------------
 # [ Backup - Before ] 
