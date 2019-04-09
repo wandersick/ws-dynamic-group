@@ -94,7 +94,9 @@ If ($inputMode -ieq 'Dynamic') {
     $directoryMode = "Domain"
     $customGroup = $true 
     # Generate CSV from AD domain by running specified LDAP filter, adding 'Username' (literally) to the top row
-    Get-ADUser -LDAPFilter "$ldapFilter" | Select-Object SamAccountName | ConvertTo-CSV -NoTypeInformation -Delimiter "," | ForEach-Object {$_ -replace '"',''} | ForEach-Object {$_ -replace 'SamAccountName','Username'} > "$scriptDir\01_Incoming\$csvFile" 
+    if ($mainLogic -eq $true) {
+        Get-ADUser -LDAPFilter "$ldapFilter" | Select-Object SamAccountName | ConvertTo-CSV -NoTypeInformation -Delimiter "," | ForEach-Object {$_ -replace '"',''} | ForEach-Object {$_ -replace 'SamAccountName','Username'} > "$scriptDir\01_Incoming\$csvFile" 
+    }
 }
 
 # Move 01_Incoming\incoming.csv to a directory of randomized name inside 02_Processing
