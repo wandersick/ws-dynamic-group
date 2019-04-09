@@ -137,7 +137,7 @@ if ($backupBefore -eq $true) {
 
 # Write dummy file to 'Processed' folder to signal completion of backup (before)
 if ($backupBefore -eq $true) {
-    Write-Output "The existence of this file indicates the backup (before) has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Backup_(Before)"
+    Write-Output "The existence of this file indicates the backup (before) has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Backup_(Before)" -Force
 }
 
 # -------------------------------------------------------------------------------------------
@@ -207,7 +207,7 @@ if ($mainLogic -eq $true) {
 
 # Write dummy file to 'Processed' folder to signal completion of main logic
 if ($mainLogic -eq $true) {
-    Write-Output "The existence of this file indicates the main logic has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Main_Logic"
+    Write-Output "The existence of this file indicates the main logic has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Main_Logic" -Force
 }
 
 # -------------------------------------------------------------------------------------------
@@ -237,7 +237,7 @@ if ($backupAfter -eq $true) {
 
 # Write dummy file to 'Processed' folder to signal completion of backup (after)
 if ($backupAfter -eq $true) {
-    Write-Output "The existence of this file indicates the backup (after) has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Backup_(After)"
+    Write-Output "The existence of this file indicates the backup (after) has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Backup_(After)" -Force
 }
 
 # Move processed folder to 03_Done
@@ -245,4 +245,4 @@ Copy-Item "$scriptDir\02_Processing\$currentDateTime\" "$scriptDir\03_Done\$curr
 Remove-Item "$scriptDir\02_Processing\$currentDateTime\" -Recurse -Force
 
 # Write dummy file to 'Processed' folder to signal completion of script
-Write-Output "The existence of this file indicates the script has been run until the end." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Script"
+Write-Output "The existence of this file indicates the script has been run until the end." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Script" -Force
