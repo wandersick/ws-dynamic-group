@@ -40,7 +40,7 @@ $backupAfter = $false # Record final group members to a log file (Output File: G
 # - Note: dynamic LDAP input mode automatically assumes 'Domain' and overrides 'Local' directory Mode
 # - Example 1: $inputMode = "Dynamic"
 # - Example 2: $inputMode = "Static"
-$inputMode = "Dynamic"
+$inputMode = "Static"
 
     # Directory mode (for both input modes)
     # - Determine whether to interact with local (workgroup) or domain (AD) authentication provider
@@ -58,7 +58,7 @@ $inputMode = "Dynamic"
     # - Acquire a list of users from AD domain to generate a CSV file for further processing (used by dynamic LDAP input mode)
     # - Example 1: (samAccountName=s9999*)
     # - Example 2: ((mailNickname=id*)(whenChanged>=20180101000000.0Z))(|(userAccountControl=514))(|(memberof=CN=VIP,OU=Org,DC=test,DC=com)))
-    $ldapFilter = ""
+    $ldapFilter = "(samAccountName=*)"
 
     # ------- Settings - Static Input Mode -------
 
@@ -75,7 +75,7 @@ $inputMode = "Dynamic"
 #   - If disabled, group name is acquired from CSV file (static input mode only)
 # - If input mode is set to dynamic (LDAP), customGroup is automatically $true whatever input mode is set
 # - Example: $customGroup = $false
-$customGroup = $false
+$customGroup = $true
 
     # Custom group name (see above)
     # - One group name can be specified here in the script instead of CSV
@@ -103,6 +103,9 @@ If ($inputMode -ieq 'Dynamic') {
 New-Item "$scriptDir\02_Processing\$currentDateTime" -Force -ItemType "directory"
 Copy-Item "$scriptDir\01_Incoming\$csvFile" "$scriptDir\02_Processing\$currentDateTime\$csvFile" -Force
 Remove-Item "$scriptDir\01_Incoming\$csvFile" -force 
+
+# Pre-create 03_Done directory
+New-Item "$scriptDir\03_Done\$currentDateTime" -Force -Itemtype Directory
 
 if ($mainLogic -eq $true) {
     # Import users and groups from CSV into an array
