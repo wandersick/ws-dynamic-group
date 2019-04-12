@@ -1,5 +1,5 @@
 # Name: ws-dynamic-group
-# Version: 1.1
+# Version: 1.2
 # Author: wandersick
 
 # Descriptions: Monitor a flat file (CSV) for additions or removal of users in one or more groups (run as a scheduled task)
@@ -25,6 +25,14 @@ $scriptDir = "c:\ws-dynamic-group"
 # - Example: Get-Date -format "yyyyMMdd_hhmmsstt" (e.g. "20190227_095047AM")
 $currentDateTime = Get-Date -format "yyyyMMdd_hhmmsstt"
 
+# ------- Section(s) of Script to Run -------
+# 
+$backupBefore = $false # Backup existing group members to a log file (Output File: GroupMemberBefore_GroupName.csv)
+$mainLogic = $true # Perform the main function of the script
+    $userAddition = $true # Perform user addition for each user that is in CSV but not in system
+    $userDeletion = $true # Perform user deletion for each user that is in system but not in CSV
+$backupAfter = $false # Record final group members to a log file (Output File: GroupMemberAfter_GroupName.csv)
+
 # ------- Settings - Input Source -------
 
 # Input mode
@@ -34,7 +42,7 @@ $currentDateTime = Get-Date -format "yyyyMMdd_hhmmsstt"
 # - Note: dynamic LDAP input mode automatically assumes 'Domain' and overrides 'Local' directory Mode
 # - Example 1: $inputMode = "Dynamic"
 # - Example 2: $inputMode = "Static"
-$inputMode = "Dynamic"
+$inputMode = "Static"
 
     # Directory mode (for both input modes)
     # - Determine whether to interact with local (workgroup) or domain (AD) authentication provider
@@ -52,7 +60,7 @@ $inputMode = "Dynamic"
     # - Acquire a list of users from AD domain to generate a CSV file for further processing (used by dynamic LDAP input mode)
     # - Example 1: (samAccountName=s9999*)
     # - Example 2: ((mailNickname=id*)(whenChanged>=20180101000000.0Z))(|(userAccountControl=514))(|(memberof=CN=VIP,OU=Org,DC=test,DC=com)))
-    $ldapFilter = ""
+    $ldapFilter = "(samAccountName=*)"
 
     # ------- Settings - Static Input Mode -------
 
@@ -68,8 +76,9 @@ $inputMode = "Dynamic"
 #   - If enabled, below $customGroupName is the group name and takes precedence over the CSV (if group name is defined in the CSV or not)
 #   - If disabled, group name is acquired from CSV file (static input mode only)
 # - If input mode is set to dynamic (LDAP), customGroup is automatically $true whatever input mode is set
+# - Custom group is unsupported for deletion (the feature is deprecated); for deletion, custom group is true always
 # - Example: $customGroup = $false
-$customGroup = $false
+$customGroup = $true
 
     # Custom group name (see above)
     # - One group name can be specified here in the script instead of CSV
@@ -88,7 +97,9 @@ If ($inputMode -ieq 'Dynamic') {
     $directoryMode = "Domain"
     $customGroup = $true 
     # Generate CSV from AD domain by running specified LDAP filter, adding 'Username' (literally) to the top row
-    Get-ADUser -LDAPFilter "$ldapFilter" | Select-Object SamAccountName | ConvertTo-CSV -NoTypeInformation -Delimiter "," | ForEach-Object {$_ -replace '"',''} | ForEach-Object {$_ -replace 'SamAccountName','Username'} > "$scriptDir\01_Incoming\$csvFile" 
+    if ($mainLogic -eq $true) {
+        Get-ADUser -LDAPFilter "$ldapFilter" | Select-Object SamAccountName | ConvertTo-CSV -NoTypeInformation -Delimiter "," | ForEach-Object {$_ -replace '"',''} | ForEach-Object {$_ -replace 'SamAccountName','Username'} > "$scriptDir\01_Incoming\$csvFile" 
+    }
 }
 
 # Move 01_Incoming\incoming.csv to a directory of randomized name inside 02_Processing
@@ -96,113 +107,187 @@ New-Item "$scriptDir\02_Processing\$currentDateTime" -Force -ItemType "directory
 Copy-Item "$scriptDir\01_Incoming\$csvFile" "$scriptDir\02_Processing\$currentDateTime\$csvFile" -Force
 Remove-Item "$scriptDir\01_Incoming\$csvFile" -force 
 
-# Import users and groups from CSV into an array
-$csvItems = import-csv "$scriptDir\02_Processing\$currentDateTime\$csvFile"
-# Alternative, for user deletion in sub-function
-$csv2Items = import-csv "$scriptDir\02_Processing\$currentDateTime\$csvFile"
+# Pre-create 03_Done directory
+New-Item "$scriptDir\03_Done\$currentDateTime" -Force -Itemtype Directory
+
+if ($mainLogic -eq $true) {
+    # Import users and groups from CSV into an array
+    $csvItems = import-csv "$scriptDir\02_Processing\$currentDateTime\$csvFile"
+}
+
+# -------------------------------------------------------------------------------------------
+# [ Backup - Before ] 
+# -------------------------------------------------------------------------------------------
 
 # Backup existing group members to a log file (Output File: GroupMemberBefore_GroupName.csv)
-If ($customGroup -eq $true) {
-    $csvGroupname = $customGroupName
-    if ($directoryMode -ieq "Local") {
-        Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberBefore_$csvGroupname.csv" -Force
-    } elseif ($directoryMode -ieq "Domain") {
-        Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv" -Force 
-    }
-} else {
-    ForEach ($csvItem in $csvItems) {
-        $csvGroupname = $($csvItem.groupname)
+
+if ($backupBefore -eq $true) {
+    If ($customGroup -eq $true) {
+        $csvGroupname = $customGroupName
         if ($directoryMode -ieq "Local") {
             Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberBefore_$csvGroupname.csv" -Force
         } elseif ($directoryMode -ieq "Domain") {
             Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv" -Force 
         }
-    }
-}
-
-# Enumerate each line from CSV
-ForEach ($csvItem in $csvItems) {
-    $csvUsername = $($csvItem.username)
-    # If customGroup is enabled and group name is defined at the top of the script, acquire the group name there;
-    # Otherwise, acquire it from CSV (more than one group names are supported if CSV)
-    If ($customGroup -eq $true) {
-        $csvGroupname = $customGroupName
     } else {
-        $csvGroupname = $($csvItem.groupname)
-    }
-
-    # For the group being processed, acquire existing group members from it in current system into an array
-    if ($directoryMode -ieq "Local") {
-        $sysGroupMembers = Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember
-    } elseif ($directoryMode -ieq "Domain") {
-        $sysGroupMembers = Get-ADGroup "$csvGroupname" | Get-ADGroupMember
-    }
-
-    # Enumberate group members of the group from current system
-    # For each username in CSV, compare with group member in current system
-    ForEach ($sysGroupMember in $sysGroupMembers) {
-        $userSysCheck = $false
-        $sysGroupMemberName = $($sysGroupMember.name).split("\\")[-1]
-        # Enumberate users from CSV (alternative variable) and DELETE existing users in system not found in CSV
-        ForEach ($csv2Item in $csv2Items) {
-            $csv2Username = $($csv2Item.username)
- 
-            if ($sysGroupMemberName -eq $csv2Username) {
-                $userSysCheck = $true
-            }
- 
-            if ($userSysCheck -eq $true) {
-                # Break out of the ForEach loop if true to prevent from needless further processing
-                Break
-            }
-        }
-        # In case user does not exist in CSV but in system, remove the user from group in system.
-        # This won't apply to users who exist in CSV and in system to prevent interruption to the users
-        # Note: The code below may run more than once
-        #       If the user has already been deleted by a previous run, subsequent runs have no effect and output the user cannot be found
-        if ($userSysCheck -eq $false) {
+        ForEach ($csvItem in $csvItems) {
+            $csvGroupname = $($csvItem.groupname)
             if ($directoryMode -ieq "Local") {
-                # Todo*: Remove-LocalGroupMember -Group "" -Member ""
-                net localgroup `"$csvGroupname`" `"$sysGroupMember`" /del 
+                Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberBefore_$csvGroupname.csv" -Force
             } elseif ($directoryMode -ieq "Domain") {
-                # Todo*: Remove-ADGroupMember -Identity "" -Members ""
-                net group `"$csvGroupname`" `"$sysGroupMemberName`" /del
+                Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv" -Force 
             }
         }
     }
-     # Perform usersadd action on user and group
-
-     # This also applies to users who already exist in CSV and in system, so there can be harmless error messages that can be safely ignored:
-     # "System error 1378 has occurred." "The specified account name is already a member of the group"
-     if ($directoryMode -ieq "Local") {
-        # Todo*: Add-LocalGroupMember -Group "" -Member ""
-        net localgroup `"$csvGroupname`" `"$csvUsername`" /add
-    } elseif ($directoryMode -ieq "Domain") {
-        # Todo*: Add-ADGroupMember -Identity "" -Members ""
-        net group `"$csvGroupname`" `"$csvUsername`" /add
-        # *A workaround is currently in use to acquire correct variable content as `"...`". This requires traditional CLI commands
-        #  Although this works, I left it as a todo for this part to be written in PowerShell without the workaround
-    }
-    
 }
+
+# Write dummy file to 'Processed' folder to signal completion of backup (before)
+if ($backupBefore -eq $true) {
+    Write-Output "The existence of this file indicates the backup (before) has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Backup_(Before)" -Force
+}
+
+# -------------------------------------------------------------------------------------------
+# [ Main Logic ] 
+# -------------------------------------------------------------------------------------------
+
+# [ User Addition ] 
+ 
+# Enumerate each line from CSV
+if ($mainLogic -eq $true) {
+    if ($userAddition -eq $true) {
+        ForEach ($csvItem in $csvItems) {
+            $csvUsername = $($csvItem.username)
+            # If customGroup is enabled and group name is defined at the top of the script, acquire the group name there;
+            # Otherwise, acquire it from CSV (more than one group names are supported if CSV)
+            If ($customGroup -eq $true) {
+                $csvGroupname = $customGroupName
+            } else {
+                $csvGroupname = $($csvItem.groupname)
+            }
+
+            # For the group being processed, acquire existing group members from it in current system into an array
+            if ($directoryMode -ieq "Local") {
+                $sysGroupMembers = Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember
+            } elseif ($directoryMode -ieq "Domain") {
+                $sysGroupMembers = Get-ADGroup "$csvGroupname" | Get-ADGroupMember
+            }
+
+            # Enumerate group members of the group from current system
+            # For each username in CSV, compare with group member in current system
+            $userToAdd = $true
+            ForEach ($sysGroupMember in $sysGroupMembers) {           
+                $sysGroupMemberName = $($sysGroupMember.name).split("\\")[-1]
+                if ($sysGroupMemberName -eq $csvUsername) {
+                    # User already exists in system and CSV
+                    $userToAdd = $false
+                }
+            }
+
+            # Perform user addition action on user and group
+
+            # This does not apply to users who already exist in CSV and in system, so there is no longer error messages as follows:
+            # "System error 1378 has occurred." "The specified account name is already a member of the group"
+            if ($userToAdd -eq $true) {
+                if ($directoryMode -ieq "Local") {
+                    # Todo*: Add-LocalGroupMember -Group "" -Member ""
+                    net localgroup `"$csvGroupname`" `"$csvUsername`" /add
+                } elseif ($directoryMode -ieq "Domain") {
+                    # Todo*: Add-ADGroupMember -Identity "" -Members ""
+                    net group `"$csvGroupname`" `"$csvUsername`" /add
+                    # *A workaround is currently in use to acquire correct variable content as `"...`". This requires traditional CLI commands
+                    #  Although this works, I left it as a todo for this part to be written in PowerShell without the workaround
+                }
+            }
+            
+        }
+        # Write dummy file to 'Processed' folder to signal completion of main logic - user addition
+        Write-Output "The existence of this file indicates the main logic - user addition has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Main_Logic-User_Addition" -Force
+    }
+}
+
+# [ User Deletion ] 
+
+# Enumerate group members of the group from current system
+if ($mainLogic -eq $true) {
+    if ($userDeletion -eq $true) {
+        # Acquire the group name from top of script (custom group is unsupported for deletion; hence, it is true always)
+        $csvGroupname = $customGroupName
+
+        # For the group being processed, acquire existing group members from it in current system into an array
+        if ($directoryMode -ieq "Local") {
+            $sysGroupMembers = Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember
+        } elseif ($directoryMode -ieq "Domain") {
+            $sysGroupMembers = Get-ADGroup "$csvGroupname" | Get-ADGroupMember
+        }
+        
+        ForEach ($sysGroupMember in $sysGroupMembers) {
+            $sysGroupMemberName = $($sysGroupMember.name).split("\\")[-1]
+
+            # Enumerate group members of the group from CSV
+            # For each username in system, compare with group member in CSV
+            $userToKeep = $false
+            ForEach ($csvItem in $csvItems) {
+                $csvUsername = $($csvItem.username)
+                if ($csvUsername -eq $sysGroupMemberName) {
+                    # User already exists in CSV and system
+                    $userToKeep = $true
+                }
+            }
+
+            # Perform user deletion action on user and group
+
+            # DELETE existing users in system not found in CSV
+            # In case user does not exist in CSV but in system, remove the user from group in system.
+            # This won't apply to users who exist in CSV and in system to prevent interruption to the users
+            if ($userToKeep -eq $false) {
+                if ($directoryMode -ieq "Local") {
+                    # Todo*: Remove-LocalGroupMember -Group "" -Member ""
+                    net localgroup `"$csvGroupname`" `"$sysGroupMember`" /del 
+                } elseif ($directoryMode -ieq "Domain") {
+                    # Todo*: Remove-ADGroupMember -Identity "" -Members ""
+                    net group `"$csvGroupname`" `"$sysGroupMemberName`" /del
+                }
+            }
+        }
+        # Write dummy file to 'Processed' folder to signal completion of main logic - user deletion
+        Write-Output "The existence of this file indicates the main logic - user deletion has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Main_Logic-User_Deletion" -Force
+    }
+}
+
+
+# Write dummy file to 'Processed' folder to signal completion of main logic
+if ($mainLogic -eq $true) {
+    Write-Output "The existence of this file indicates the main logic has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Main_Logic" -Force
+}
+
+# -------------------------------------------------------------------------------------------
+# [ Backup - After ] 
+# -------------------------------------------------------------------------------------------
 
 # Record final group members to a log file (Output File: GroupMemberAfter_GroupName.csv)
-If ($customGroup -eq $true) {
-    $csvGroupname = $customGroupName
-    if ($directoryMode -ieq "Local") {
-        Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberAfter_$csvGroupname.csv" -Force
-    } elseif ($directoryMode -ieq "Domain") {
-        Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberAfter_$csvGroupname.csv" -Force
-    }
-} else {
-    ForEach ($csvItem in $csvItems) {
-        $csvGroupname = $($csvItem.groupname)
+if ($backupAfter -eq $true) {
+    If ($customGroup -eq $true) {
+        $csvGroupname = $customGroupName
         if ($directoryMode -ieq "Local") {
             Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberAfter_$csvGroupname.csv" -Force
         } elseif ($directoryMode -ieq "Domain") {
             Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberAfter_$csvGroupname.csv" -Force
         }
+    } else {
+        ForEach ($csvItem in $csvItems) {
+            $csvGroupname = $($csvItem.groupname)
+            if ($directoryMode -ieq "Local") {
+                Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberAfter_$csvGroupname.csv" -Force
+            } elseif ($directoryMode -ieq "Domain") {
+                Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberAfter_$csvGroupname.csv" -Force
+            }
+        }
     }
+}
+
+# Write dummy file to 'Processed' folder to signal completion of backup (after)
+if ($backupAfter -eq $true) {
+    Write-Output "The existence of this file indicates the backup (after) has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Backup_(After)" -Force
 }
 
 # Move processed folder to 03_Done
@@ -210,4 +295,4 @@ Copy-Item "$scriptDir\02_Processing\$currentDateTime\" "$scriptDir\03_Done\$curr
 Remove-Item "$scriptDir\02_Processing\$currentDateTime\" -Recurse -Force
 
 # Write dummy file to 'Processed' folder to signal completion of script
-Write-Output "The existence of this file indicates the script has been run until the end." | Out-File "$scriptDir\03_Done\$currentDateTime\Completed"
+Write-Output "The existence of this file indicates the script has been run until the end." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Script" -Force
