@@ -40,7 +40,7 @@ For details, see [Detailed Flow](#Detailed-Flow) section below.
 
  Sample of flat file (01_Incoming\incoming.csv), where 'Groupname' column is optional and unused by dynamic LDAP input mode but static CSV input mode only:
 ```
-Username[,Groupname]
+Username[,Groupname (Deprecated)]
 testuser02[,"full-time students"]
 testuser03[,"full-time students"]
 testtutor01[,tutors]
@@ -48,18 +48,19 @@ testtutor02[,tutors]
 ```
 
 Note:
-* The top row (header) has to be Username (Groupname is optional and deprecated to be specifed via CSV. Specify it at the top of the script file instead)
+* The top row (header) has to be Username (Groupname is optional and deprecated to be specified via CSV. Specify it at the top of the script file instead)
+  * Since v1.2, specifying group name in CSV does not work for user deletion anymore but addition only; there is no such limitation for users specified via the top of the script
 * If group name is specified at the top of the script (i.e. at the [Settings](#Settings) section), it takes precedence. Any group name defined in the CSV has no effect
   * Only one group name is supported as defined at the top of the script
   * For static input mode, multiple group names can be defined in CSV if custom group name feature is disabled (set to false)
 * Additional notes on the difference of input modes
   * For dynamic input mode ($inputMode = "dynamic"), the only way to define group name is via the top of the script
-  * For static input mode ($inputMode = "static"), group names have to be defined for all users; each line of CSV must contain group name
+  * For static input mode ($inputMode = "static"), group names have to be defined for all users; either each line of CSV should contain group name or the top of the script should
 
 # Folder Structure
 
 The zip file should be extracted to below directory, so that the below folder structure is built:
-```
+```c
 C:\ws-dynamic-group
 │
 ├───01_Incoming
@@ -73,6 +74,8 @@ C:\ws-dynamic-group
 │           Completed // indication of completion of script
 |           Completed_Backup_(Before) // indication of completion of script section: Backup (before)
 |           Completed_Main_Logic // indication of completion of script section: Main Logic
+|           Completed_Main_Logic-User_Addition // indication of completion of script section: Main Logic - User Addition
+|           Completed_Main_Logic-User_Deletion // indication of completion of script section: Main Logic - User Deletion
 |           Completed_Backup_(After) // indication of completion of script section: Backup (After)
 │           incoming.csv
 │           Domain|LocalGroupMemberAfter_full-time students.csv // optional: if enabled ($backupAfter is $true)
@@ -101,6 +104,41 @@ This section describes the [folder structure](#Folder-Structure) and the main ac
    - [Local|Domain]GroupMember**After**_(groupName).csv
 7. Write a file named 'Completed' to '03_Done' when the script ends
 
+# Cases in Main Logic
+
+| **Case** | **CSV** | **System** | **Action** |
+| --- | --- | --- | --- |
+| 1 | CSV has the user | System has the user | No change |
+| 2 | CSV has the user | System has no such user | Add the user to sys |
+| 3 | CSV has no such user | System has the user | Remove the user from sys |
+| 4 | CSV has no such user | System has no such user | No change |
+
+## Loop 1 for Case 2
+
+| Case | CSV | System | Action |
+| --- | --- | --- | --- |
+| 2 | CSV has the user | System has no such user | Add the user to system |
+
+```ps1
+For (each of all users in CSV)
+    For (each of all users in system)
+      if (system has no such user)
+        Add user to system
+```
+
+## Loop 2 for Case 3
+
+| **Case** | **CSV** | **System** | **Action** |
+| --- | --- | --- | --- |
+| 3 | CSV has no such user | System has the user | Remove the user from system |
+
+```ps1
+For (each of all users in system)
+  For (each of all users in CSV)
+    if (CSV has no such user)
+      Remove user from system
+```
+
 # Settings
 
 Settings that can be modified at [Editable Settings] section in 'Scripts\ws-dynamic-group-core.ps1':
@@ -126,6 +164,8 @@ $currentDateTime = Get-Date -format "yyyyMMdd_hhmmsstt"
 # 
 $backupBefore = $false # Backup existing group members to a log file (Output File: GroupMemberBefore_GroupName.csv)
 $mainLogic = $true # Perform the main function of the script
+    $userAddition = $true # Perform user addition for each user that is in CSV but not in system
+    $userDeletion = $true # Perform user deletion for each user that is in system but not in CSV
 $backupAfter = $false # Record final group members to a log file (Output File: GroupMemberAfter_GroupName.csv)
 
 # ------- Settings - Input Source -------
@@ -137,7 +177,7 @@ $backupAfter = $false # Record final group members to a log file (Output File: G
 # - Note: dynamic LDAP input mode automatically assumes 'Domain' and overrides 'Local' directory Mode
 # - Example 1: $inputMode = "Dynamic"
 # - Example 2: $inputMode = "Static"
-$inputMode = "Dynamic"
+$inputMode = "Static"
 
     # Directory mode (for both input modes)
     # - Determine whether to interact with local (workgroup) or domain (AD) authentication provider
@@ -155,7 +195,7 @@ $inputMode = "Dynamic"
     # - Acquire a list of users from AD domain to generate a CSV file for further processing (used by dynamic LDAP input mode)
     # - Example 1: (samAccountName=s9999*)
     # - Example 2: ((mailNickname=id*)(whenChanged>=20180101000000.0Z))(|(userAccountControl=514))(|(memberof=CN=VIP,OU=Org,DC=test,DC=com)))
-    $ldapFilter = ""
+    $ldapFilter = "(samAccountName=*)"
 
     # ------- Settings - Static Input Mode -------
 
@@ -171,8 +211,9 @@ $inputMode = "Dynamic"
 #   - If enabled, below $customGroupName is the group name and takes precedence over the CSV (if group name is defined in the CSV or not)
 #   - If disabled, group name is acquired from CSV file (static input mode only)
 # - If input mode is set to dynamic (LDAP), customGroup is automatically $true whatever input mode is set
+# - Custom group is unsupported for deletion (the feature is deprecated); for deletion, custom group is true always
 # - Example: $customGroup = $false
-$customGroup = $false
+$customGroup = $true
 
     # Custom group name (see above)
     # - One group name can be specified here in the script instead of CSV
@@ -187,6 +228,8 @@ $customGroup = $false
 
 * Version 1.2 - 20190409
     * Performance enhancement
+      * Rough calculation of an execution of 10,000 objects is 3 times faster than last time
+    * Reduces the number of for-loops and/or nested for-loops
     * Script has been separated into three sections which can be optionally enabled: Backup (Before), Main Logic and Backup (After). For performance reasons, only
       * Main Logic is enabled by default
     * Within Main Logic, more granularity is achieved by further separating it into User Addition and User Deletion. Each of them can be enabled and run sequentially or in parallel as required
