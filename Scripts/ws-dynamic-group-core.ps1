@@ -200,6 +200,8 @@ if ($mainLogic -eq $true) {
             }
             
         }
+        # Write dummy file to 'Processed' folder to signal completion of main logic - user addition
+        Write-Output "The existence of this file indicates the main logic - user addition has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Main_Logic-User_Addition" -Force
     }
 }
 
@@ -247,6 +249,8 @@ if ($mainLogic -eq $true) {
                 }
             }
         }
+        # Write dummy file to 'Processed' folder to signal completion of main logic - user deletion
+        Write-Output "The existence of this file indicates the main logic - user deletion has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Main_Logic-User_Deletion" -Force
     }
 }
 
