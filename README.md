@@ -34,7 +34,6 @@ For details, see [Detailed Flow](#Detailed-Flow) section below.
 
 * For 'domain' mode, the script has to be executed on a domain controller (due to the use of 'net group' commands)
   * Use of Remote Server Administration Tools (RSAT) is unsupported
-* Current version aims to just 'do the job'. It could use workarounds here and there. Performance is not its priority
 
 # Flat File Schema
 
@@ -230,8 +229,8 @@ $customGroup = $true
     * Performance enhancement
       * Rough calculation of an execution of 10,000 objects is 3 times faster than last time
     * Reduces the number of for-loops and/or nested for-loops
-    * Script has been separated into three sections which can be optionally enabled: Backup (Before), Main Logic and Backup (After). For performance reasons, only
-      * Main Logic is enabled by default
+    * Script has been separated into three sections which can be optionally enabled: Backup (Before), Main Logic and Backup (After)
+      * For performance reasons, only Main Logic is enabled by default
     * Within Main Logic, more granularity is achieved by further separating it into User Addition and User Deletion. Each of them can be enabled and run sequentially or in parallel as required
       * For example, two sets of the script with similar settings, with the only difference being set A having userAddition enabled and set B having userDeletion disabled, may be run in parallel to speed up user addition and deletion
 
