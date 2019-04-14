@@ -201,6 +201,13 @@ $inputMode = "Static"
     # - For processing inside 01_Incoming folder (used by static CSV input mode)
     # - Example: $csvFile = "incoming.csv"
     $csvFile = "incoming.csv"
+
+# ------- Settings - Group Name Source -------
+
+# Custom group name
+# - One group name can be specified here in each script
+# Example: $customGroupName = "tutors" 
+$customGroupName = "tutors"
 ```
 
 # Release Notes

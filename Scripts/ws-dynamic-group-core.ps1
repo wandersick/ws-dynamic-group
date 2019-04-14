@@ -75,7 +75,7 @@ $inputMode = "Static"
     # - Example: $csvFile = "incoming.csv"
     $csvFile = "incoming.csv"
 
-# ------- Settings - Group Name Source -------
+# ------- Settings - Group Name -------
 
 # Custom group name
 # - One group name can be specified here in each script
