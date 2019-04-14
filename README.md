@@ -1,11 +1,12 @@
 # Dynamic Group (ws-dynamic-group)
 
-* Monitor a flat file (CSV) for additions or removal of users in one or more groups (e.g. for scheduling using Task Scheduler)
-* Dynamic and static input support
+* Monitor a flat file (CSV) for additions or removal of users in a group (e.g. for scheduling using Task Scheduler)
+* Specify usernames dynamically or statically
    * Dynamic: The CSV input file can be dynamically created according to an LDAP query (specified in the script) from a live Active Directory domain
    * Static: Users may also statically pre-create the CSV input file (in a location and filename defined in the script)
+* Specify group name at the top variable section of the script
 * Apply the changes (addition/deletion) to system accordingly, either locally (workgroup) or on a domain controller (Active Directory)
-   * Support for both local (workgroup) and domain (Active Directory) environments (See [More Settings](#More-Settings) section below)
+   * There is support for both local (workgroup) and domain (Active Directory) environments (See [More Settings](#More-Settings) section below)
 
 For details, see [Detailed Flow](#Detailed-Flow) section below.
 
@@ -20,11 +21,11 @@ For details, see [Detailed Flow](#Detailed-Flow) section below.
 * Windows or Windows Server which can execute PowerShell from required modules, where:
   * The PowerShell module, Microsoft.Powershell.LocalAccounts, is required for 'local' mode
   * The PowerShell module, ActiveDirectory, is required for 'domain' mode (and only Domain Controllers are supported)
-* Groups has to be pre-created
-  * If group(s) specified are not created, script cannot proceed
-* Admin rights
+* Group has to be pre-created in the target system
+  * If specified group is not created, script cannot proceed
+* Administrator rights
   * Script has to be run with a user account in the 'Domain Admins' AD group for 'Domain' mode, or (local) 'Administrators' group 'Local' mode, in order to successfully add or delete users
-* Requirements for 'static' input mode
+* Notes for 'static' input mode
   * incoming.csv has to be a full file containing all users (usernames) of the specified group(s) that needs to be processed.
     * For example, if only few usernames are in the CSV while the system actually has a lot of users, this will be treated as an intended deletion of the lot of users in the system unspecified in the CSV file
   * Also see notes under [Flat File Schema](#Flat-File-Schema) section
@@ -37,24 +38,19 @@ For details, see [Detailed Flow](#Detailed-Flow) section below.
 
 # Flat File Schema
 
- Sample of flat file (01_Incoming\incoming.csv), where 'Groupname' column is optional and unused by dynamic LDAP input mode but static CSV input mode only:
+ Sample of flat file (01_Incoming\incoming.csv):
 ```
-Username[,Groupname (Deprecated)]
-testuser02[,"full-time students"]
-testuser03[,"full-time students"]
-testtutor01[,tutors]
-testtutor02[,tutors]
+Username
+testuser02
+testuser03
+testtutor01
+testtutor02
 ```
 
 Note:
-* The top row (header) has to be Username (Groupname is optional and deprecated to be specified via CSV. Specify it at the top of the script file instead)
-  * Since v1.2, specifying group name in CSV does not work for user deletion anymore but addition only; there is no such limitation for users specified via the top of the script
-* If group name is specified at the top of the script (i.e. at the [Settings](#Settings) section), it takes precedence. Any group name defined in the CSV has no effect
-  * Only one group name is supported as defined at the top of the script
-  * For static input mode, multiple group names can be defined in CSV if custom group name feature is disabled (set to false)
-* Additional notes on the difference of input modes
-  * For dynamic input mode ($inputMode = "dynamic"), the only way to define group name is via the top of the script
-  * For static input mode ($inputMode = "static"), group names have to be defined for all users; either each line of CSV should contain group name or the top of the script should
+* The top row (header) has to be Username
+  * Group name has to be specified at the top variable section of the script with the customGroupName variable
+  * Only one group name is supported per script
 
 # Folder Structure
 
@@ -90,18 +86,21 @@ C:\ws-dynamic-group
 This section describes the [folder structure](#Folder-Structure) and the main actions performed by each execution of the script.
 1. Create a unique folder for each execution (to improve organization and avoid conflict)
    - Randomize a unique value made up of day time in milliseconds
-2. Backup existing group members to a file
+2. Backup Before – back up existing group members to a file
    - [Local|Domain]GroupMember**Before**_(groupName).csv
-3. Acquire input
-   - For 'dynamic' LDAP input mode, leverage specified LDAP query in the script to dynamically generate 'incoming.csv' in '01_Incoming' folder 
-   - For 'static' CSV input mode, acquire 'incoming.csv' from '01_Incoming' folder (manually created by user) and move it to '02_Processing' folder for processing
-4. Perform action (adding/removing users from groups) specified in CSV
+3. Acquiring input
+   - Acquiring usernames
+     - For 'dynamic' LDAP input mode, leverage specified LDAP query in the script to dynamically generate 'incoming.csv' in '01_Incoming' folder
+     - For 'static' CSV input mode, acquire 'incoming.csv' from '01_Incoming' folder (manually created by user) and move it to '02_Processing' folder for processing
+   - Acquiring group name
+     - A group name per script is specified at the top variable section of the script with the customGroupName variable
+4. Main Logic – perform action (adding/removing users from groups) specified in CSV
    - Add users from CSV to local or AD group, if the users are in CSV but not in system
    - Remove users from existing groups, if the users are not in CSV but in system
 5. Move completed folders to '03_Done' folder
-6. Back up final group members to a file
+6. Backup After – Back up final group members to a file
    - [Local|Domain]GroupMember**After**_(groupName).csv
-7. Write a file named 'Completed' to '03_Done' when the script ends
+7. Write a file named 'Completed' to '03_Done' when each section of the script ends
 
 # Cases in Main Logic
 
@@ -202,28 +201,14 @@ $inputMode = "Static"
     # - For processing inside 01_Incoming folder (used by static CSV input mode)
     # - Example: $csvFile = "incoming.csv"
     $csvFile = "incoming.csv"
-
-# ------- Settings - Group Name Source -------
-
-# Enable or disable custom group name feature - $true (enabled) or $false (disabled)
-# - Determine how to acquire the group name
-#   - If enabled, below $customGroupName is the group name and takes precedence over the CSV (if group name is defined in the CSV or not)
-#   - If disabled, group name is acquired from CSV file (static input mode only)
-# - If input mode is set to dynamic (LDAP), customGroup is automatically $true whatever input mode is set
-# - Custom group is unsupported for deletion (the feature is deprecated); for deletion, custom group is true always
-# - Example: $customGroup = $false
-$customGroup = $true
-
-    # Custom group name (see above)
-    # - One group name can be specified here in the script instead of CSV
-    # - Supported for both dynamic LDAP input mode and static CSV input mode
-    #   - For dynamic LDAP input mode, the only way to define group name is here
-    #   - For static CSV input mode, it can be defined both here or manually in CSV
-    # Example: $customGroupName = "tutors" 
-    $customGroupName = "tutors"
 ```
 
 # Release Notes
+
+* Version 1.3 - 20190414
+    * Maintenance release – no new feature. (Therefore, keep using the last version would be OK)
+    * Update README document and refactor code for the purpose of an easier reading
+      * Remove deprecated feature – only one group name can be specified, at the top variable section of the script (specifying multiple group names in CSV was deprecated in the last version)
 
 * Version 1.2 - 20190409
     * Performance enhancement
@@ -233,6 +218,9 @@ $customGroup = $true
       * For performance reasons, only Main Logic is enabled by default
     * Within Main Logic, more granularity is achieved by further separating it into User Addition and User Deletion. Each of them can be enabled and run sequentially or in parallel as required
       * For example, two sets of the script with similar settings, with the only difference being set A having userAddition enabled and set B having userDeletion disabled, may be run in parallel to speed up user addition and deletion
+    * Group name has to be specified at the top of script
+      * Specifying it in CSV is no longer supported
+      * Only one group name can be specified
 
 * Version 1.1 - 20190315
     * Besides already supported method of statically creating CSV input file, dynamic LDAP input mode is now supported, where incoming.csv is generated according to a LDAP query specified in the script, live from current Active Directory domain
