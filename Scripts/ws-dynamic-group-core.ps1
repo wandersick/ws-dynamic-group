@@ -1,10 +1,16 @@
 # Name: ws-dynamic-group
-# Version: 1.2
+# Version: 1.3
 # Author: wandersick
 
-# Descriptions: Monitor a flat file (CSV) for additions or removal of users in one or more groups (run as a scheduled task)
-#               Apply the changes to system accordingly, locally or on a domain controller (Active Directory)
-#               (Current version aims to 'do the job'. It could use workarounds here and there. Performance is not its priority)
+# Descriptions: 
+# - Monitor a flat file (CSV) for additions or removal of users in a group (e.g. for scheduling using Task Scheduler)
+# - Specify usernames dynamically or statically
+#   - Dynamic: The CSV input file can be dynamically created according to an LDAP query (specified in the script) from a live Active Directory domain
+#   - Static: Users may also statically pre-create the CSV input file (in a location and filename defined in the script)
+# - Specify group name at the top variable section of the script
+# - Apply the changes (addition/deletion) to system accordingly, either locally (workgroup) or on a domain controller (Active Directory)
+#   - There is support for both local (workgroup) and domain (Active Directory) environments
+
 # More Details: https://github.com/wandersick/ws-dynamic-group
 
 # ---------------------------------------------------------------------------------
@@ -71,31 +77,18 @@ $inputMode = "Static"
 
 # ------- Settings - Group Name Source -------
 
-# Enable or disable custom group name feature - $true (enabled) or $false (disabled)
-# - Determine how to acquire the group name
-#   - If enabled, below $customGroupName is the group name and takes precedence over the CSV (if group name is defined in the CSV or not)
-#   - If disabled, group name is acquired from CSV file (static input mode only)
-# - If input mode is set to dynamic (LDAP), customGroup is automatically $true whatever input mode is set
-# - Custom group is unsupported for deletion (the feature is deprecated); for deletion, custom group is true always
-# - Example: $customGroup = $false
-$customGroup = $true
-
-    # Custom group name (see above)
-    # - One group name can be specified here in the script instead of CSV
-    # - Supported for both dynamic LDAP input mode and static CSV input mode
-    #   - For dynamic LDAP input mode, the only way to define group name is here
-    #   - For static CSV input mode, it can be defined both here or manually in CSV
-    # Example: $customGroupName = "tutors" 
-    $customGroupName = "tutors"
+# Custom group name
+# - One group name can be specified here in each script
+# Example: $customGroupName = "tutors" 
+$customGroupName = "tutors"
 
 # ---------------------------------------------------------------------------------
 
 # [Main Body of Script]
 
-# In static 'LDAP' input mode, it automatically assumes 'Domain' and overrides 'Local' directoryMode (if configured); likewise for customGroup
+# In static 'LDAP' input mode, it automatically assumes 'Domain' and overrides 'Local' directoryMode (if configured)
 If ($inputMode -ieq 'Dynamic') {
     $directoryMode = "Domain"
-    $customGroup = $true 
     # Generate CSV from AD domain by running specified LDAP filter, adding 'Username' (literally) to the top row
     if ($mainLogic -eq $true) {
         Get-ADUser -LDAPFilter "$ldapFilter" | Select-Object SamAccountName | ConvertTo-CSV -NoTypeInformation -Delimiter "," | ForEach-Object {$_ -replace '"',''} | ForEach-Object {$_ -replace 'SamAccountName','Username'} > "$scriptDir\01_Incoming\$csvFile" 
@@ -122,22 +115,11 @@ if ($mainLogic -eq $true) {
 # Backup existing group members to a log file (Output File: GroupMemberBefore_GroupName.csv)
 
 if ($backupBefore -eq $true) {
-    If ($customGroup -eq $true) {
-        $csvGroupname = $customGroupName
-        if ($directoryMode -ieq "Local") {
-            Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberBefore_$csvGroupname.csv" -Force
-        } elseif ($directoryMode -ieq "Domain") {
-            Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv" -Force 
-        }
-    } else {
-        ForEach ($csvItem in $csvItems) {
-            $csvGroupname = $($csvItem.groupname)
-            if ($directoryMode -ieq "Local") {
-                Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberBefore_$csvGroupname.csv" -Force
-            } elseif ($directoryMode -ieq "Domain") {
-                Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv" -Force 
-            }
-        }
+    $csvGroupname = $customGroupName
+    if ($directoryMode -ieq "Local") {
+        Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberBefore_$csvGroupname.csv" -Force
+    } elseif ($directoryMode -ieq "Domain") {
+        Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv" -Force 
     }
 }
 
@@ -157,13 +139,8 @@ if ($mainLogic -eq $true) {
     if ($userAddition -eq $true) {
         ForEach ($csvItem in $csvItems) {
             $csvUsername = $($csvItem.username)
-            # If customGroup is enabled and group name is defined at the top of the script, acquire the group name there;
-            # Otherwise, acquire it from CSV (more than one group names are supported if CSV)
-            If ($customGroup -eq $true) {
-                $csvGroupname = $customGroupName
-            } else {
-                $csvGroupname = $($csvItem.groupname)
-            }
+            # Acquire the group name from the top variable of this script
+            $csvGroupname = $customGroupName
 
             # For the group being processed, acquire existing group members from it in current system into an array
             if ($directoryMode -ieq "Local") {
@@ -185,8 +162,7 @@ if ($mainLogic -eq $true) {
 
             # Perform user addition action on user and group
 
-            # This does not apply to users who already exist in CSV and in system, so there is no longer error messages as follows:
-            # "System error 1378 has occurred." "The specified account name is already a member of the group"
+            # This does not apply to users who already exist in CSV and in system
             if ($userToAdd -eq $true) {
                 if ($directoryMode -ieq "Local") {
                     # Todo*: Add-LocalGroupMember -Group "" -Member ""
@@ -210,7 +186,7 @@ if ($mainLogic -eq $true) {
 # Enumerate group members of the group from current system
 if ($mainLogic -eq $true) {
     if ($userDeletion -eq $true) {
-        # Acquire the group name from top of script (custom group is unsupported for deletion; hence, it is true always)
+        # Acquire the group name from top of script
         $csvGroupname = $customGroupName
 
         # For the group being processed, acquire existing group members from it in current system into an array
@@ -266,22 +242,11 @@ if ($mainLogic -eq $true) {
 
 # Record final group members to a log file (Output File: GroupMemberAfter_GroupName.csv)
 if ($backupAfter -eq $true) {
-    If ($customGroup -eq $true) {
-        $csvGroupname = $customGroupName
-        if ($directoryMode -ieq "Local") {
-            Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberAfter_$csvGroupname.csv" -Force
-        } elseif ($directoryMode -ieq "Domain") {
-            Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberAfter_$csvGroupname.csv" -Force
-        }
-    } else {
-        ForEach ($csvItem in $csvItems) {
-            $csvGroupname = $($csvItem.groupname)
-            if ($directoryMode -ieq "Local") {
-                Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberAfter_$csvGroupname.csv" -Force
-            } elseif ($directoryMode -ieq "Domain") {
-                Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberAfter_$csvGroupname.csv" -Force
-            }
-        }
+    $csvGroupname = $customGroupName
+    if ($directoryMode -ieq "Local") {
+        Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberAfter_$csvGroupname.csv" -Force
+    } elseif ($directoryMode -ieq "Domain") {
+        Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberAfter_$csvGroupname.csv" -Force
     }
 }
 
