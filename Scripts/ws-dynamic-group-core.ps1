@@ -1,9 +1,12 @@
 # Name: ws-dynamic-group
-# Version: 1.3
+# Version: 2.0
 # Author: wandersick
 
 # Descriptions: 
-# - Monitor a flat file (CSV) for additions or removal of users in a group (e.g. for scheduling using Task Scheduler)
+# - Monitor a flat file (CSV) for additions or removal of users in a local/domain group by comparing users in the file with users in a system
+#   (For scheduling, add it to a task using Task Scheduler)
+#   - If users exist in CSV but not in system, add the users
+#   - If users exist in system but not in CSV, delete the users
 # - Specify usernames dynamically or statically
 #   - Dynamic: The CSV input file can be dynamically created according to an LDAP query (specified in the script) from a live Active Directory domain
 #   - Static: Users may also statically pre-create the CSV input file (in a location and filename defined in the script)
@@ -33,11 +36,10 @@ $currentDateTime = Get-Date -format "yyyyMMdd_hhmmsstt"
 
 # ------- Section(s) of Script to Run -------
 # 
-$backupBefore = $false # Backup existing group members to a log file (Output File: GroupMemberBefore_GroupName.csv)
 $mainLogic = $true # Perform the main function of the script
     $userAddition = $true # Perform user addition for each user that is in CSV but not in system
     $userDeletion = $true # Perform user deletion for each user that is in system but not in CSV
-$backupAfter = $false # Record final group members to a log file (Output File: GroupMemberAfter_GroupName.csv)
+$backupAfter = $true # Record final group members to a log file (Output File: GroupMemberAfter_GroupName.csv)
 
 # ------- Settings - Input Source -------
 
@@ -58,7 +60,7 @@ $inputMode = "Static"
     # - Note: If input mode is set to dynamic (LDAP), this has no effect and is automatically assumed to be "Domain"
     # - Example 1: $directoryMode = "Local"
     # - Example 2: $directoryMode = "Domain"
-    $directoryMode = "Local"
+    $directoryMode = "Domain"
 
     # ------- Settings - Dynamic Input Mode -------
 
@@ -89,9 +91,9 @@ $customGroupName = "tutors"
 # In static 'LDAP' input mode, it automatically assumes 'Domain' and overrides 'Local' directoryMode (if configured)
 If ($inputMode -ieq 'Dynamic') {
     $directoryMode = "Domain"
-    # Generate CSV from AD domain by running specified LDAP filter, adding 'Username' (literally) to the top row
+    # Generate CSV from AD domain by running specified LDAP filter
     if ($mainLogic -eq $true) {
-        Get-ADUser -LDAPFilter "$ldapFilter" | Select-Object SamAccountName | ConvertTo-CSV -NoTypeInformation -Delimiter "," | ForEach-Object {$_ -replace '"',''} | ForEach-Object {$_ -replace 'SamAccountName','Username'} > "$scriptDir\01_Incoming\$csvFile" 
+        Get-ADUser -LDAPFilter "$ldapFilter" | Select-Object -ExpandProperty SamAccountName > "$scriptDir\01_Incoming\$csvFile" 
     }
 }
 
@@ -103,23 +105,21 @@ Remove-Item "$scriptDir\01_Incoming\$csvFile" -force
 # Pre-create 03_Done directory
 New-Item "$scriptDir\03_Done\$currentDateTime" -Force -Itemtype Directory
 
-if ($mainLogic -eq $true) {
-    # Import users and groups from CSV into an array
-    $csvItems = import-csv "$scriptDir\02_Processing\$currentDateTime\$csvFile"
-}
-
 # -------------------------------------------------------------------------------------------
-# [ Backup - Before ] 
+# [ Backup - Before ]
 # -------------------------------------------------------------------------------------------
 
 # Backup existing group members to a log file (Output File: GroupMemberBefore_GroupName.csv)
+ 
+# Required to be true for Compare-Object since v2.0
+$backupBefore = $true
 
 if ($backupBefore -eq $true) {
     $csvGroupname = $customGroupName
     if ($directoryMode -ieq "Local") {
-        Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberBefore_$csvGroupname.csv" -Force
+        Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Select-Object -ExpandProperty Name > "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberBefore_$csvGroupname.csv"
     } elseif ($directoryMode -ieq "Domain") {
-        Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv" -Force 
+        Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Select-Object -ExpandProperty Name > "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv" 
     }
 }
 
@@ -134,47 +134,28 @@ if ($backupBefore -eq $true) {
 
 # [ User Addition ] 
  
-# Enumerate each line from CSV
 if ($mainLogic -eq $true) {
     if ($userAddition -eq $true) {
-        ForEach ($csvItem in $csvItems) {
-            $csvUsername = $($csvItem.username)
-            # Acquire the group name from the top variable of this script
-            $csvGroupname = $customGroupName
 
-            # For the group being processed, acquire existing group members from it in current system into an array
+        # Take action on users who only exist in the CSV
+        if ($directoryMode -ieq "Local") {
+            # Instead of a try-catch block, `@(Get-Content file | Select-Object)` is in use to work around an issue in which `Compare-Object` outputs errors when the number of object to compare is zero
+            $beingAddedUsers = Compare-Object @(Get-Content "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberBefore_$csvGroupname.csv" | Select-Object) @(Get-Content "$scriptDir\02_Processing\$currentDateTime\$csvFile" | Select-Object) | Where-Object {$_.SideIndicator -eq "=>"} | Select-Object -ExpandProperty inputObject
+        } elseif ($directoryMode -ieq "Domain") {
+            $beingAddedUsers = Compare-Object @(Get-Content "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv" | Select-Object) @(Get-Content "$scriptDir\02_Processing\$currentDateTime\$csvFile" | Select-Object) | Where-Object {$_.SideIndicator -eq "=>"} | Select-Object -ExpandProperty inputObject
+        }
+
+        ForEach ($beingAddedUser in $beingAddedUsers) {
+            # Add user, who are only found in CSV but not in system, to the group '$customGroupName' defined at the top variable of this script
             if ($directoryMode -ieq "Local") {
-                $sysGroupMembers = Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember
+                # Todo*: Add-LocalGroupMember -Group "" -Member ""
+                net localgroup `"$customGroupName`" `"$beingAddedUser`" /add
             } elseif ($directoryMode -ieq "Domain") {
-                $sysGroupMembers = Get-ADGroup "$csvGroupname" | Get-ADGroupMember
+                # Todo*: Add-ADGroupMember -Identity "" -Members ""
+                net group `"$customGroupName`" `"$beingAddedUser`" /add
+                # *A workaround is currently in use to acquire correct variable content as `"...`". This requires traditional CLI commands
+                #  Although this works, I left it as a todo for this part to be written in PowerShell without the workaround
             }
-
-            # Enumerate group members of the group from current system
-            # For each username in CSV, compare with group member in current system
-            $userToAdd = $true
-            ForEach ($sysGroupMember in $sysGroupMembers) {           
-                $sysGroupMemberName = $($sysGroupMember.name).split("\\")[-1]
-                if ($sysGroupMemberName -eq $csvUsername) {
-                    # User already exists in system and CSV
-                    $userToAdd = $false
-                }
-            }
-
-            # Perform user addition action on user and group
-
-            # This does not apply to users who already exist in CSV and in system
-            if ($userToAdd -eq $true) {
-                if ($directoryMode -ieq "Local") {
-                    # Todo*: Add-LocalGroupMember -Group "" -Member ""
-                    net localgroup `"$csvGroupname`" `"$csvUsername`" /add
-                } elseif ($directoryMode -ieq "Domain") {
-                    # Todo*: Add-ADGroupMember -Identity "" -Members ""
-                    net group `"$csvGroupname`" `"$csvUsername`" /add
-                    # *A workaround is currently in use to acquire correct variable content as `"...`". This requires traditional CLI commands
-                    #  Although this works, I left it as a todo for this part to be written in PowerShell without the workaround
-                }
-            }
-            
         }
         # Write dummy file to 'Processed' folder to signal completion of main logic - user addition
         Write-Output "The existence of this file indicates the main logic - user addition has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Main_Logic-User_Addition" -Force
@@ -186,43 +167,25 @@ if ($mainLogic -eq $true) {
 # Enumerate group members of the group from current system
 if ($mainLogic -eq $true) {
     if ($userDeletion -eq $true) {
-        # Acquire the group name from top of script
-        $csvGroupname = $customGroupName
 
-        # For the group being processed, acquire existing group members from it in current system into an array
+        # Take action on users who only exist in the system but not in CSV
         if ($directoryMode -ieq "Local") {
-            $sysGroupMembers = Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember
+            # Instead of a try-catch block, `@(Get-Content file | Select-Object)` is in use to work around an issue in which `Compare-Object` outputs errors when the number of object to compare is zero
+            $beingDeletedUsers = Compare-Object @(Get-Content "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberBefore_$csvGroupname.csv" | Select-Object) @(Get-Content "$scriptDir\02_Processing\$currentDateTime\$csvFile" | Select-Object) | Where-Object {$_.SideIndicator -eq "<="} | Select-Object -ExpandProperty inputObject
         } elseif ($directoryMode -ieq "Domain") {
-            $sysGroupMembers = Get-ADGroup "$csvGroupname" | Get-ADGroupMember
+            $beingDeletedUsers = Compare-Object @(Get-Content "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv" | Select-Object) @(Get-Content "$scriptDir\02_Processing\$currentDateTime\$csvFile" | Select-Object) | Where-Object {$_.SideIndicator -eq "<="} | Select-Object -ExpandProperty inputObject
         }
-        
-        ForEach ($sysGroupMember in $sysGroupMembers) {
-            $sysGroupMemberName = $($sysGroupMember.name).split("\\")[-1]
 
-            # Enumerate group members of the group from CSV
-            # For each username in system, compare with group member in CSV
-            $userToKeep = $false
-            ForEach ($csvItem in $csvItems) {
-                $csvUsername = $($csvItem.username)
-                if ($csvUsername -eq $sysGroupMemberName) {
-                    # User already exists in CSV and system
-                    $userToKeep = $true
-                }
-            }
-
-            # Perform user deletion action on user and group
-
-            # DELETE existing users in system not found in CSV
-            # In case user does not exist in CSV but in system, remove the user from group in system.
-            # This won't apply to users who exist in CSV and in system to prevent interruption to the users
-            if ($userToKeep -eq $false) {
-                if ($directoryMode -ieq "Local") {
-                    # Todo*: Remove-LocalGroupMember -Group "" -Member ""
-                    net localgroup `"$csvGroupname`" `"$sysGroupMember`" /del 
-                } elseif ($directoryMode -ieq "Domain") {
-                    # Todo*: Remove-ADGroupMember -Identity "" -Members ""
-                    net group `"$csvGroupname`" `"$sysGroupMemberName`" /del
-                }
+        ForEach ($beingDeletedUser in $beingDeletedUsers) {
+            # Add user, who are only found in system but not in CSV, to the group '$customGroupName' defined at the top variable of this script
+            if ($directoryMode -ieq "Local") {
+                # Todo*: Add-LocalGroupMember -Group "" -Member ""
+                net localgroup `"$customGroupName`" `"$beingDeletedUser`" /del
+            } elseif ($directoryMode -ieq "Domain") {
+                # Todo*: Add-ADGroupMember -Identity "" -Members ""
+                net group `"$customGroupName`" `"$beingDeletedUser`" /del
+                # *A workaround is currently in use to acquire correct variable content as `"...`". This requires traditional CLI commands
+                #  Although this works, I left it as a todo for this part to be written in PowerShell without the workaround
             }
         }
         # Write dummy file to 'Processed' folder to signal completion of main logic - user deletion
@@ -244,9 +207,9 @@ if ($mainLogic -eq $true) {
 if ($backupAfter -eq $true) {
     $csvGroupname = $customGroupName
     if ($directoryMode -ieq "Local") {
-        Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberAfter_$csvGroupname.csv" -Force
+        Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Select-Object -ExpandProperty Name > "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberAfter_$csvGroupname.csv"
     } elseif ($directoryMode -ieq "Domain") {
-        Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Export-CSV "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberAfter_$csvGroupname.csv" -Force
+        Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Select-Object -ExpandProperty Name > "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberAfter_$csvGroupname.csv"
     }
 }
 

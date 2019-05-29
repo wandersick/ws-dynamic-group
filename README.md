@@ -1,6 +1,8 @@
 # Dynamic Group (ws-dynamic-group)
 
-* Monitor a flat file (CSV) for additions or removal of users in a group (e.g. for scheduling using Task Scheduler)
+* Monitor a flat file (CSV) for additions or removal of users in a local/domain group by comparing users in the file with users in a system. (For scheduling, add it to a task using Task Scheduler)
+   * If users exist in CSV but not in system, add the users
+   * If users exist in system but not in CSV, delete the users
 * Specify usernames dynamically or statically
    * Dynamic: The CSV input file can be dynamically created according to an LDAP query (specified in the script) from a live Active Directory domain
    * Static: Users may also statically pre-create the CSV input file (in a location and filename defined in the script)
@@ -31,25 +33,35 @@ For details, see [Detailed Flow](#Detailed-Flow) section below.
   * Also see notes under [Flat File Schema](#Flat-File-Schema) section
 
 
-# Limitations
+# Known Issues
 
+* Use of 'net group' and 'net localgroup' instead of their PowerShell equivalents
 * For 'domain' mode, the script has to be executed on a domain controller (due to the use of 'net group' commands)
   * Use of Remote Server Administration Tools (RSAT) is unsupported
+* Under local (workgroup) mode, the Get-LocalGroup and/or LocalGroupMember returns usernames in a format of (NETBIOS) *HOSTNAME\Username* instead of *Username*; therefore, the schema has to be adjusted accordingly
+* Instead of a try-catch block, `@(Get-Content file | Select-Object)` is in use to work around an issue in which `Compare-Object` outputs errors when the number of object to compare is zero
+* The script does not alert when a massive number of deletions occurs which could results in undesired outcome. (The script currently backs up all users beforehand and afterwards which could facilitate troubleshooting and comparison.)
 
 # Flat File Schema
 
- Sample of flat file (01_Incoming\incoming.csv):
+ Sample of flat file (01_Incoming\incoming.csv) for domain mode:
 ```
-Username
 testuser02
 testuser03
 testtutor01
 testtutor02
 ```
 
+ Sample of flat file (01_Incoming\incoming.csv) for local mode:
+```
+HOSTNAME\testuser02
+HOSTNAME\testuser03
+HOSTNAME\testtutor01
+HOSTNAME\testtutor02
+```
+
 Note:
-* The top row (header) has to be Username
-  * Group name has to be specified at the top variable section of the script with the customGroupName variable
+* Group name has to be specified at the top variable section of the script with the customGroupName variable
   * Only one group name is supported per script
 
 # Folder Structure
@@ -104,37 +116,59 @@ This section describes the [folder structure](#Folder-Structure) and the main ac
 
 # Cases in Main Logic
 
-| **Case** | **CSV** | **System** | **Action** |
-| --- | --- | --- | --- |
-| 1 | CSV has the user | System has the user | No change |
-| 2 | CSV has the user | System has no such user | Add the user to sys |
-| 3 | CSV has no such user | System has the user | Remove the user from sys |
-| 4 | CSV has no such user | System has no such user | No change |
+| **Case** | **CSV**              | **System**              | **Action**               |
+|----------|----------------------|-------------------------|--------------------------|
+| 1        | CSV has the user     | System has the user     | No change                |
+| 2        | CSV has the user     | System has no such user | Add the user to sys      |
+| 3        | CSV has no such user | System has the user     | Remove the user from sys |
+| 4        | CSV has no such user | System has no such user | No change                |
 
-## Loop 1 for Case 2
+## Main Logic for Case 2
 
-| Case | CSV | System | Action |
-| --- | --- | --- | --- |
-| 2 | CSV has the user | System has no such user | Add the user to system |
+| Case | CSV              | System                  | Action                 |
+|------|------------------|-------------------------|------------------------|
+| 2    | CSV has the user | System has no such user | Add the user to system |
 
 ```ps1
-For (each of all users in CSV)
-    For (each of all users in system)
-      if (system has no such user)
-        Add user to system
+# Take action on users who only exist in the CSV
+if ($directoryMode -ieq "Local") {
+    $beingAddedUsers = Compare-Object (Get-Content "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberBefore_$csvGroupname.csv") (Get-Content "$scriptDir\02_Processing\$currentDateTime\$csvFile") | Where-Object {$_.SideIndicator -eq "=>"} | Select-Object -ExpandProperty inputObject
+} elseif ($directoryMode -ieq "Domain") {
+    $beingAddedUsers = Compare-Object (Get-Content "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv") (Get-Content "$scriptDir\02_Processing\$currentDateTime\$csvFile") | Where-Object {$_.SideIndicator -eq "=>"} | Select-Object -ExpandProperty inputObject
+}
+
+ForEach ($beingAddedUser in $beingAddedUsers) {
+    # Add user, who are only found in CSV but not in system, to the group '$customGroupName' defined at the top variable of this script
+    if ($directoryMode -ieq "Local") {
+        net localgroup `"$customGroupName`" `"$beingAddedUser`" /add
+    } elseif ($directoryMode -ieq "Domain") {
+        net group `"$customGroupName`" `"$beingAddedUser`" /add
+    }
+}
 ```
 
-## Loop 2 for Case 3
+## Main Logic for Case 3
 
-| **Case** | **CSV** | **System** | **Action** |
-| --- | --- | --- | --- |
-| 3 | CSV has no such user | System has the user | Remove the user from system |
+| **Case** | **CSV**              | **System**          | **Action**                  |
+|----------|----------------------|---------------------|-----------------------------|
+| 3        | CSV has no such user | System has the user | Remove the user from system |
 
 ```ps1
-For (each of all users in system)
-  For (each of all users in CSV)
-    if (CSV has no such user)
-      Remove user from system
+# Take action on users who only exist in the system but not in CSV
+if ($directoryMode -ieq "Local") {
+    $beingDeletedUsers = Compare-Object (Get-Content "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberBefore_$csvGroupname.csv") (Get-Content "$scriptDir\02_Processing\$currentDateTime\$csvFile") | Where-Object {$_.SideIndicator -eq "<="} | Select-Object -ExpandProperty inputObject
+} elseif ($directoryMode -ieq "Domain") {
+    $beingDeletedUsers = Compare-Object (Get-Content "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv") (Get-Content "$scriptDir\02_Processing\$currentDateTime\$csvFile") | Where-Object {$_.SideIndicator -eq "<="} | Select-Object -ExpandProperty inputObject
+}
+
+ForEach ($beingDeletedUser in $beingDeletedUsers) {
+    # Add user, who are only found in system but not in CSV, to the group '$customGroupName' defined at the top variable of this script
+    if ($directoryMode -ieq "Local") {
+        net localgroup `"$customGroupName`" `"$beingDeletedUser`" /del
+    } elseif ($directoryMode -ieq "Domain") {
+        net group `"$customGroupName`" `"$beingDeletedUser`" /del
+    }
+}
 ```
 
 # Settings
@@ -160,7 +194,6 @@ $currentDateTime = Get-Date -format "yyyyMMdd_hhmmsstt"
 
 # ------- Section(s) of Script to Run -------
 # 
-$backupBefore = $false # Backup existing group members to a log file (Output File: GroupMemberBefore_GroupName.csv)
 $mainLogic = $true # Perform the main function of the script
     $userAddition = $true # Perform user addition for each user that is in CSV but not in system
     $userDeletion = $true # Perform user deletion for each user that is in system but not in CSV
@@ -211,6 +244,14 @@ $customGroupName = "tutors"
 ```
 
 # Release Notes
+
+* Version 2.0 - 20190528
+    * Minimize the iterations of for-loops (ForEach-Object) for performance enhancement by:
+      * Replacing the comparisons in Main Logic with Compare-Object
+      * Eliminate the use of 'ForEach-Object' for replacing characters with 'Select-Object -ExpandProperty'
+    * It is no longer a requirement to specify *Username* as the header in a flat file (CSV)
+    * The backupBefore parameter is no longer available for customization because backing up group members beforehand is now a hard requirement being a comparison source for Compare-Object cmdlet
+      * The output file of backupBefore has been reformatted to a single column in order to fit the comparison. (The output file of backupAfter has also been reformatted to align with the change, although not required technically, this still facilitate comparison in case of troubleshooting)
 
 * Version 1.3 - 20190414
     * Maintenance release – no new feature. (Therefore, keep using the last version would be OK)

@@ -1,4 +1,0 @@
-#TYPE Microsoft.PowerShell.Commands.LocalPrincipal
-"Name","SID","PrincipalSource","ObjectClass"
-"WS\ningn","S-1-5-21-2281270265-109052308-1789343181-1001","MicrosoftAccount","User"
-"WS\travis","S-1-5-21-2281270265-109052308-1789343181-500","Local","User"
