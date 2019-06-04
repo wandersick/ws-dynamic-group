@@ -1,5 +1,5 @@
 # Name: ws-dynamic-group
-# Version: 2.0
+# Version: 2.1
 # Author: wandersick
 
 # Descriptions: 
@@ -15,6 +15,33 @@
 #   - There is support for both local (workgroup) and domain (Active Directory) environments
 
 # More Details: https://github.com/wandersick/ws-dynamic-group
+
+# ---------------------------------------------------------------------------------
+
+# [Parameters accepted by this script]
+
+Param(
+    # Source file path
+    # - Syntax:   -csvPath <source file in absolute or relative path>
+    # - Example:  ws-dynamic-group.ps1 -csvPath "C:\Folder\incoming.csv"
+    # - Note:     Overrides $csvFile specified inside script
+    #             (No need to name the file as "incoming.csv")
+    [string]$csvPath,
+    # Group name
+    # - Syntax:   -groupName <group name of AD domain or local workgroup>
+    # - Example:  ws-dynamic-group.ps1 -groupName "tutors"
+    # - Note:     Overrides $customGroupName specified inside script
+    [string]$groupName,
+    # Force user deletion (even if userDeletionThreshold is reached)
+    # - Syntax:   -force $true
+    # - Example:  ws-dynamic-group.ps1 -force $true
+    # - Note:     Overrides $forceUserDeletion inside script if -force is $true
+    #             ('-force $false' would not override the script equivalent)
+    [boolean]$force
+)
+
+# Example - All Parameters at Once
+# ws-dynamic-group -csvPath "C:\Folder\File.csv" -groupName "tutors" -force $true
 
 # ---------------------------------------------------------------------------------
 
@@ -57,7 +84,7 @@ $inputMode = "Static"
     # - Either case-insensitive 'Local' or 'Domain'
     #   - 'Local' (workgroup) directory mode where local group would be enumerated,
     #   - 'Domain' directory mode which is only supported to be run on a domain controller
-    # - Note: If input mode is set to dynamic (LDAP), this has no effect and is automatically assumed to be "Domain"
+    # - Note: If input mode is set to dynamic (LDAP), this has NO EFFECT and is automatically assumed to be "Domain"
     # - Example 1: $directoryMode = "Local"
     # - Example 2: $directoryMode = "Domain"
     $directoryMode = "Domain"
@@ -66,11 +93,16 @@ $inputMode = "Static"
 
     # LDAP filter
     # - Acquire a list of users from AD domain to generate a CSV file for further processing (used by dynamic LDAP input mode)
-    # - Example 1: (samAccountName=s9999*)
-    # - Example 2: ((mailNickname=id*)(whenChanged>=20180101000000.0Z))(|(userAccountControl=514))(|(memberof=CN=VIP,OU=Org,DC=test,DC=com)))
-    $ldapFilter = "(samAccountName=*)"
+    # - Example 1 (AND):  (&(ipPhone=1)(pager=1))
+    # - Example 2 (OR):   (|(ipPhone=1)(pager=1))
+    # - Example 3 (STAR): (samAccountName=s9999*)
+    # - Example 4 (MORE): ((mailNickname=id*)(whenChanged>=20180101000000.0Z))(|(userAccountControl=514))(|(memberof=CN=VIP,OU=Org,DC=test,DC=com)))
+    $ldapFilter = "(|(ipPhone=1)(pager=2))"
 
     # ------- Settings - Static Input Mode -------
+
+    # NOTE: The below has NO EFFECT when source file path is specified via command line:
+    #       e.g. ws-dynamic-group-core.ps1 -csvPath "C:\Folder\file.csv"
 
     # CSV filename
     # - For processing inside 01_Incoming folder (used by static CSV input mode)
@@ -79,14 +111,52 @@ $inputMode = "Static"
 
 # ------- Settings - Group Name -------
 
+# NOTE: The below has NO EFFECT when group name parameter is specified via command line:
+#       e.g. ws-dynamic-group-core.ps1 -groupName "tutors"
+
 # Custom group name
 # - One group name can be specified here in each script
-# Example: $customGroupName = "tutors" 
+# Example: $customGroupName = "tutors"
 $customGroupName = "tutors"
+
+# ------- Settings - User Deletion Threshold -------
+
+# Skip user deletion when the below threshold is reached
+# Set it to a desired value e.g. 0.8 (80%)
+# Example: $userDeletionThreshold = 0.8
+$userDeletionThreshold = 0.8
+
+# NOTE: The below has NO EFFECT when force parameter is specified as $true via command line:
+#       e.g. ws-dynamic-group-core.ps1 -force $true
+
+# Force user deletion even when threshold is reached
+# Example: $forceUserDeletion = $false
+$forceUserDeletion = $false
+
+# ------- Settings - Email -------
+
+# Send mail alerts to report skipping of user deletion due to reaching threshold
+$emailSender = "Sender <sender@domain.local>"
+$emailRecipient = "Recipient A <recipienta@domain.local>", "Recipient B <recipientb@domain.local>"
+$emailSubjectFailure = "Dynamic Group User Deletion Skipped - " + $currentDateTime
+$emailBodyFailure = "This is an automated message after dynamic group script skips user deletion due to the number of users being deleted reaches defined threshold:`n`n - userDeletionThreshold of $userDeletionThreshold`n`nFor details, please check the folder where the dynamic group script is executed, which is named using the same timestamp in this email subject at:`n`n - $scriptDir\03_Done\$currentDateTime`n"
+$emailServer = "10.123.123.123"
 
 # ---------------------------------------------------------------------------------
 
 # [Main Body of Script]
+
+# Load parameters specified via command line, overriding parameters specified inside script
+
+# Override $forceUserDeletion specified inside script if $force is set to $true via command line
+if ($force) {
+    $forceUserDeletion = $true
+}
+
+# Override $customGroupName specified inside script if $groupName is specified via command line
+if ($groupName) {
+    $customGroupName = $groupName
+}
 
 # In static 'LDAP' input mode, it automatically assumes 'Domain' and overrides 'Local' directoryMode (if configured)
 If ($inputMode -ieq 'Dynamic') {
@@ -99,14 +169,23 @@ If ($inputMode -ieq 'Dynamic') {
 
 # Move 01_Incoming\incoming.csv to a directory of randomized name inside 02_Processing
 New-Item "$scriptDir\02_Processing\$currentDateTime" -Force -ItemType "directory"
-Copy-Item "$scriptDir\01_Incoming\$csvFile" "$scriptDir\02_Processing\$currentDateTime\$csvFile" -Force
-Remove-Item "$scriptDir\01_Incoming\$csvFile" -force 
+
+# If source file path (csvPath) is specified using command-line parameter (e.g. ws-dynamic-group.ps1 -csvPath "C:\Folder\File.csv")
+# and the path is valid (test-path returns $true). Only supports static mode instead of dynamic (LDAP filter has to be specified inside script for this release)
+if (((Test-Path $("filesystem::$csvPath")) -eq $true) -and ($inputMode -ieq "Static")) {
+    # Copy source file from the path specified via command line
+    Copy-Item "$csvPath" "$scriptDir\02_Processing\$currentDateTime\$csvFile" -Force
+} else {
+    # Copy source file from the 01_Incoming directory with the file name specified inside script (default: incoming.csv)
+    Copy-Item "$scriptDir\01_Incoming\$csvFile" "$scriptDir\02_Processing\$currentDateTime\$csvFile" -Force
+    Remove-Item "$scriptDir\01_Incoming\$csvFile" -force 
+}
 
 # Pre-create 03_Done directory
 New-Item "$scriptDir\03_Done\$currentDateTime" -Force -Itemtype Directory
 
 # -------------------------------------------------------------------------------------------
-# [ Backup - Before ]
+# [ Backup - Before (Mandatory) ]
 # -------------------------------------------------------------------------------------------
 
 # Backup existing group members to a log file (Output File: GroupMemberBefore_GroupName.csv)
@@ -118,8 +197,12 @@ if ($backupBefore -eq $true) {
     $csvGroupname = $customGroupName
     if ($directoryMode -ieq "Local") {
         Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember | Select-Object -ExpandProperty Name > "$scriptDir\02_Processing\$currentDateTime\LocalGroupMemberBefore_$csvGroupname.csv"
+        # Count no. of users currently in system
+        $sysUserCount = (Get-LocalGroup "$csvGroupname" | Get-LocalGroupMember).count
     } elseif ($directoryMode -ieq "Domain") {
         Get-ADGroup "$csvGroupname" | Get-ADGroupMember | Select-Object -ExpandProperty Name > "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv" 
+        # Count no. of users currently in system
+        $sysUserCount = (Get-ADGroup "$csvGroupname" | Get-ADGroupMember).count
     }
 }
 
@@ -145,6 +228,7 @@ if ($mainLogic -eq $true) {
             $beingAddedUsers = Compare-Object @(Get-Content "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv" | Select-Object) @(Get-Content "$scriptDir\02_Processing\$currentDateTime\$csvFile" | Select-Object) | Where-Object {$_.SideIndicator -eq "=>"} | Select-Object -ExpandProperty inputObject
         }
 
+        # Execute user addition
         ForEach ($beingAddedUser in $beingAddedUsers) {
             # Add user, who are only found in CSV but not in system, to the group '$customGroupName' defined at the top variable of this script
             if ($directoryMode -ieq "Local") {
@@ -176,20 +260,28 @@ if ($mainLogic -eq $true) {
             $beingDeletedUsers = Compare-Object @(Get-Content "$scriptDir\02_Processing\$currentDateTime\DomainGroupMemberBefore_$csvGroupname.csv" | Select-Object) @(Get-Content "$scriptDir\02_Processing\$currentDateTime\$csvFile" | Select-Object) | Where-Object {$_.SideIndicator -eq "<="} | Select-Object -ExpandProperty inputObject
         }
 
-        ForEach ($beingDeletedUser in $beingDeletedUsers) {
-            # Add user, who are only found in system but not in CSV, to the group '$customGroupName' defined at the top variable of this script
-            if ($directoryMode -ieq "Local") {
-                # Todo*: Add-LocalGroupMember -Group "" -Member ""
-                net localgroup `"$customGroupName`" `"$beingDeletedUser`" /del
-            } elseif ($directoryMode -ieq "Domain") {
-                # Todo*: Add-ADGroupMember -Identity "" -Members ""
-                net group `"$customGroupName`" `"$beingDeletedUser`" /del
-                # *A workaround is currently in use to acquire correct variable content as `"...`". This requires traditional CLI commands
-                #  Although this works, I left it as a todo for this part to be written in PowerShell without the workaround
+        # Pre-check to avoid deletion of a massive number of users (abort and mail-alert if over a defined percentage) when --force switch is unspecified and no. of users being deleted >0 to avoid "Attempt to devide by zero" error
+        if (($beingDeletedUsers.count -gt 0) -and (($beingDeletedUsers.count/$sysUserCount) -gt $userDeletionThreshold) -and !$forceUserDeletion) {
+            Send-MailMessage -From $emailSender -To $emailRecipient -Subject $emailSubjectFailure -Body $emailBodyFailure -SmtpServer $emailServer
+            # Write dummy file to 'Processed' folder to signal SKIPPING of main logic - user deletion
+            Write-Output "The existence of this file indicates the main logic - user deletion has been skipped due to the number of users being deleted reaches defined threshold - userDeletionThreshold of $userDeletionThreshold" | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Main_Logic-SKIPPED_User_Deletion" -Force
+        } else {
+            # Execute user deletion
+            ForEach ($beingDeletedUser in $beingDeletedUsers) {
+                # Add user, who are only found in system but not in CSV, to the group '$customGroupName' defined at the top variable of this script
+                if ($directoryMode -ieq "Local") {
+                    # Todo*: Add-LocalGroupMember -Group "" -Member ""
+                    net localgroup `"$customGroupName`" `"$beingDeletedUser`" /del
+                } elseif ($directoryMode -ieq "Domain") {
+                    # Todo*: Add-ADGroupMember -Identity "" -Members ""
+                    net group `"$customGroupName`" `"$beingDeletedUser`" /del
+                    # *A workaround is currently in use to acquire correct variable content as `"...`". This requires traditional CLI commands
+                    #  Although this works, I left it as a todo for this part to be written in PowerShell without the workaround
+                }
             }
+            # Write dummy file to 'Processed' folder to signal completion of main logic - user deletion
+            Write-Output "The existence of this file indicates the main logic - user deletion has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Main_Logic-User_Deletion" -Force
         }
-        # Write dummy file to 'Processed' folder to signal completion of main logic - user deletion
-        Write-Output "The existence of this file indicates the main logic - user deletion has been run." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Main_Logic-User_Deletion" -Force
     }
 }
 

@@ -83,6 +83,7 @@ C:\ws-dynamic-group
 |           Completed_Main_Logic // indication of completion of script section: Main Logic
 |           Completed_Main_Logic-User_Addition // indication of completion of script section: Main Logic - User Addition
 |           Completed_Main_Logic-User_Deletion // indication of completion of script section: Main Logic - User Deletion
+|           Completed_Main_Logic-SKIPPED_User_Deletion // indication of skipping of script section: Main Logic - User Deletion
 |           Completed_Backup_(After) // indication of completion of script section: Backup (After)
 │           incoming.csv
 │           Domain|LocalGroupMemberAfter_full-time students.csv // optional: if enabled ($backupAfter is $true)
@@ -173,6 +174,8 @@ ForEach ($beingDeletedUser in $beingDeletedUsers) {
 
 # Settings
 
+## In-Script Parameters
+
 Settings that can be modified at [Editable Settings] section in 'Scripts\ws-dynamic-group-core.ps1':
 
 ```PowerShell
@@ -197,7 +200,7 @@ $currentDateTime = Get-Date -format "yyyyMMdd_hhmmsstt"
 $mainLogic = $true # Perform the main function of the script
     $userAddition = $true # Perform user addition for each user that is in CSV but not in system
     $userDeletion = $true # Perform user deletion for each user that is in system but not in CSV
-$backupAfter = $false # Record final group members to a log file (Output File: GroupMemberAfter_GroupName.csv)
+$backupAfter = $true # Record final group members to a log file (Output File: GroupMemberAfter_GroupName.csv)
 
 # ------- Settings - Input Source -------
 
@@ -215,35 +218,113 @@ $inputMode = "Static"
     # - Either case-insensitive 'Local' or 'Domain'
     #   - 'Local' (workgroup) directory mode where local group would be enumerated,
     #   - 'Domain' directory mode which is only supported to be run on a domain controller
-    # - Note: If input mode is set to dynamic (LDAP), this has no effect and is automatically assumed to be "Domain"
+    # - Note: If input mode is set to dynamic (LDAP), this has NO EFFECT and is automatically assumed to be "Domain"
     # - Example 1: $directoryMode = "Local"
     # - Example 2: $directoryMode = "Domain"
-    $directoryMode = "Local"
+    $directoryMode = "Domain"
 
     # ------- Settings - Dynamic Input Mode -------
 
     # LDAP filter
     # - Acquire a list of users from AD domain to generate a CSV file for further processing (used by dynamic LDAP input mode)
-    # - Example 1: (samAccountName=s9999*)
-    # - Example 2: ((mailNickname=id*)(whenChanged>=20180101000000.0Z))(|(userAccountControl=514))(|(memberof=CN=VIP,OU=Org,DC=test,DC=com)))
-    $ldapFilter = "(samAccountName=*)"
+    # - Example 1 (AND):  (&(ipPhone=1)(pager=1))
+    # - Example 2 (OR):   (|(ipPhone=1)(pager=1))
+    # - Example 3 (STAR): (samAccountName=s9999*)
+    # - Example 4 (MORE): ((mailNickname=id*)(whenChanged>=20180101000000.0Z))(|(userAccountControl=514))(|(memberof=CN=VIP,OU=Org,DC=test,DC=com)))
+    $ldapFilter = "(|(ipPhone=1)(pager=1))"
 
     # ------- Settings - Static Input Mode -------
+
+    # NOTE: The below has NO EFFECT when source file path is specified via command line: e.g. ws-dynamic-group-core.ps1 -csvPath "C:\Folder\file.csv"
 
     # CSV filename
     # - For processing inside 01_Incoming folder (used by static CSV input mode)
     # - Example: $csvFile = "incoming.csv"
     $csvFile = "incoming.csv"
 
-# ------- Settings - Group Name Source -------
+# ------- Settings - Group Name -------
+
+# NOTE: The below has NO EFFECT when group name parameter is specified via command line: e.g. ws-dynamic-group-core.ps1 -groupName "tutors"
 
 # Custom group name
 # - One group name can be specified here in each script
-# Example: $customGroupName = "tutors" 
+# Example: $customGroupName = "tutors"
 $customGroupName = "tutors"
+
+# ------- Settings - User Deletion Threshold -------
+
+# Skip user deletion when the below threshold is reached
+# Set it to a desired value e.g. 0.8 (80%)
+# Example: $userDeletionThreshold = 0.8
+$userDeletionThreshold = 0.8
+
+# NOTE: The below has NO EFFECT when force parameter is specified via command line: e.g. ws-dynamic-group-core.ps1 -force $true
+
+# Force user deletion even when threshold is reached
+# Example: $forceUserDeletion = $true
+$forceUserDeletion = $false
+
+# ------- Settings - Email -------
+
+# Send mail alerts to report skipping of user deletion due to reaching threshold
+$emailSender = "Sender <sender@domain.local>"
+$emailRecipient = "Recipient A <recipienta@domain.local>", "Recipient B <recipientb@domain.local>"
+$emailSubjectFailure = "Dynamic Group User Deletion Skipped - " + $currentDateTime
+$emailBodyFailure = "This is an automated message after dynamic group script skips user deletion due to the number of users being deleted reaches defined threshold:`n`n - userDeletionThreshold of $userDeletionThreshold`n`nFor details, please check the folder where the dynamic group script is executed, which is named using the same timestamp in this email subject at:`n`n - $scriptDir\03_Done\$currentDateTime`n"
+$emailServer = "10.123.123.123"
+```
+
+## Command-Line Parameters
+
+The below essential parameters can also specified via command line, overriding the equivalent ones in the script.
+
+* `-csvPath <path to source file>`
+  * `-csvPath C:\Folder\File.csv` in command line overrides `$csvFile = "incoming.csv"` in script
+* `-groupName <group name>`
+  * `-groupName "tutors"` in command line equals `$customGroupName = $true` in script
+* `-force $true`
+  * `-force $true` in command line equals `$forceUserDeletion = $true` in script (Note: `-force $false` does not override the script equivalent)
+
+```PowerShell
+Param(
+    # Source file path
+    # - Syntax:   -csvPath <source file in absolute or relative path>
+    # - Example:  ws-dynamic-group.ps1 -csvPath "C:\Folder\File.csv"
+    # - Note:     Overrides $csvFile specified inside script
+    #             (No need to name the file as "incoming.csv")
+    [string]$csvPath,
+    # Group name
+    # - Syntax:   -groupName <group name of AD domain or local workgroup>
+    # - Example:  ws-dynamic-group.ps1 -groupName "tutors"
+    # - Note:     Overrides $customGroupName specified inside script
+    [string]$groupName,
+    # Force user deletion (even if userDeletionThreshold is reached)
+    # - Syntax:   -force $true
+    # - Example:  ws-dynamic-group.ps1 -force $true
+    # - Note:     Overrides $forceUserDeletion inside script
+    #             ('-force $false' would not override the script equivalent)
+    [boolean]$force
+)
+```
+
+### Example - All Parameters at Once
+
+```PowerShell
+ws-dynamic-group.ps1 -csvPath "C:\Folder\File.csv" -groupName "tutors" -force $true
 ```
 
 # Release Notes
+
+* Version 2.1 - 20190604
+    * Pre-check before user deletion to avoid mistake of deleting a massive number of users
+      * A userDeletionThreshold will be checked before user deletion
+        * When threshold userDeletionThreshold is reached (e.g. 0.8 meaning if over 80% of users will be deleted, skip the operation)
+      * After user deletion operation is skipped, an email message pinpointing which execution goes wrong will be sent to alert system administrator
+      * Force (forceUserDeletion) parameter is supported when system administrator decides to continue even if userDeletionThreshold is reached
+    * Accept several essential named parameters via command line, overriding the equivalent ones inside script
+      * `-csvPath <path to source file>`
+      * `-groupName <group name>`
+      * `-force $true`
 
 * Version 2.0 - 20190528
     * Minimize the iterations of for-loops (ForEach-Object) for performance enhancement by:
@@ -285,4 +366,5 @@ $customGroupName = "tutors"
     * C:\ws-dynamic-group\1, C:\ws-dynamic-group\2, C:\ws-dynamic-group\3...
 * The script may be scheduled using built-in Task Scheduler of Windows or any other preferred way of start-up
 * If Backup (Before) and Backup (After) are required but it is undesired to run them along with the Main Logic (increases processing time), a separate script may be used and scheduled solely for the Backup sections to run separately
+* Use `<tab>` key to auto-complete the command-line parameters without typing them in full
 
