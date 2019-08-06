@@ -1,5 +1,5 @@
 # Name: ws-dynamic-group
-# Version: 2.1
+# Version: 2.2
 # Author: wandersick
 
 # Descriptions: 
@@ -54,19 +54,21 @@ Param(
 # - Tip: If multiple instances are required, create copies of the script folder structure and set each scriptDir to be:
 #   - Example 1: "c:\ws-dynamic-group\1" (where this script can be located at c:\ws-dynamic-group\Scripts\1\ws-dynamic-group-core.ps1)
 #   - Example 2: "c:\ws-dynamic-group\2" (and so on)
-$scriptDir = "c:\ws-dynamic-group"
+# - Alternatively, set it to $PSScriptRoot to set dynamically during execution (where the script can be placed and executed anywhere)
+$scriptDir = $PSScriptRoot
 
 # Format of date and time 
 # - Used for uniquely naming and creating a new directory on each run by randomizing a value made up of day time
 # - Example: Get-Date -format "yyyyMMdd_hhmmsstt" (e.g. "20190227_095047AM")
 $currentDateTime = Get-Date -format "yyyyMMdd_hhmmsstt"
+$currentDate = Get-Date -format "yyyyMMdd"
+$currentTime = Get-Date -format "hhmmsstt"
 
 # ------- Section(s) of Script to Run -------
 # 
 $mainLogic = $true # Perform the main function of the script
     $userAddition = $true # Perform user addition for each user that is in CSV but not in system
     $userDeletion = $true # Perform user deletion for each user that is in system but not in CSV
-$backupAfter = $true # Record final group members to a log file (Output File: GroupMemberAfter_GroupName.csv)
 
 # ------- Settings - Input Source -------
 
@@ -141,6 +143,24 @@ $emailRecipient = "Recipient A <recipienta@domain.local>", "Recipient B <recipie
 $emailSubjectFailure = "Dynamic Group User Deletion Skipped - " + $currentDateTime
 $emailBodyFailure = "This is an automated message after dynamic group script skips user deletion due to the number of users being deleted reaches defined threshold:`n`n - userDeletionThreshold of $userDeletionThreshold`n`nFor details, please check the folder where the dynamic group script is executed, which is named using the same timestamp in this email subject at:`n`n - $scriptDir\03_Done\$currentDateTime`n"
 $emailServer = "10.123.123.123"
+
+# ------- Settings - Logging -------
+
+# Pre-create _log directory (if not already exists)
+New-Item "$scriptDir\_log\Executions" -Force -Itemtype Directory
+
+# Console output logging
+# - Log all console output (one file per execution)
+Start-Transcript -Path "$scriptDir\_log\Executions\console_log-$($currentDateTime).log"
+
+# Central action logging
+# - Log and append all actions (additions or deletions) into the below CSV file
+$logPath = "$scriptDir\_log\action_log-$($customGroupName).csv"
+
+# Record final group members to a log file (in 03_Done directory)
+# - Output File: GroupMemberAfter_GroupName.csv
+# - Note: for group members before prcoessing, it is always logged as GroupMemberBefore_GroupName.csv
+$backupAfter = $true
 
 # ---------------------------------------------------------------------------------
 
@@ -219,6 +239,8 @@ if ($backupBefore -eq $true) {
  
 if ($mainLogic -eq $true) {
     if ($userAddition -eq $true) {
+        # Current action for logging - "Addition" or "Deletion"
+        currentAction = "Addition"
 
         # Take action on users who only exist in the CSV
         if ($directoryMode -ieq "Local") {
@@ -234,11 +256,16 @@ if ($mainLogic -eq $true) {
             if ($directoryMode -ieq "Local") {
                 # Todo*: Add-LocalGroupMember -Group "" -Member ""
                 net localgroup `"$customGroupName`" `"$beingAddedUser`" /add
+                # Append to central action log file (CSV)
+                Write-Output "$currentDate,$currentTime,$directoryMode,$customGroupName,$currentAction,$beingAddedUser" >> $logPath
             } elseif ($directoryMode -ieq "Domain") {
                 # Todo*: Add-ADGroupMember -Identity "" -Members ""
                 net group `"$customGroupName`" `"$beingAddedUser`" /add
                 # *A workaround is currently in use to acquire correct variable content as `"...`". This requires traditional CLI commands
                 #  Although this works, I left it as a todo for this part to be written in PowerShell without the workaround
+                
+                # Append to central action log file (CSV)
+                Write-Output "$currentDate,$currentTime,$directoryMode,$customGroupName,$currentAction,$beingAddedUser" >> $logPath
             }
         }
         # Write dummy file to 'Processed' folder to signal completion of main logic - user addition
@@ -251,6 +278,8 @@ if ($mainLogic -eq $true) {
 # Enumerate group members of the group from current system
 if ($mainLogic -eq $true) {
     if ($userDeletion -eq $true) {
+        # Current action for logging - "Addition" or "Deletion"
+        currentAction = "Deletion"
 
         # Take action on users who only exist in the system but not in CSV
         if ($directoryMode -ieq "Local") {
@@ -272,11 +301,16 @@ if ($mainLogic -eq $true) {
                 if ($directoryMode -ieq "Local") {
                     # Todo*: Add-LocalGroupMember -Group "" -Member ""
                     net localgroup `"$customGroupName`" `"$beingDeletedUser`" /del
+                    # Append to central action log file (CSV)
+                    Write-Output "$currentDate,$currentTime,$directoryMode,$customGroupName,$currentAction,$beingAddedUser" >> $logPath
                 } elseif ($directoryMode -ieq "Domain") {
                     # Todo*: Add-ADGroupMember -Identity "" -Members ""
                     net group `"$customGroupName`" `"$beingDeletedUser`" /del
                     # *A workaround is currently in use to acquire correct variable content as `"...`". This requires traditional CLI commands
                     #  Although this works, I left it as a todo for this part to be written in PowerShell without the workaround
+
+                    # Append to central action log file (CSV)
+                    Write-Output "$currentDate,$currentTime,$directoryMode,$customGroupName,$currentAction,$beingAddedUser" >> $logPath
                 }
             }
             # Write dummy file to 'Processed' folder to signal completion of main logic - user deletion
@@ -316,3 +350,6 @@ Remove-Item "$scriptDir\02_Processing\$currentDateTime\" -Recurse -Force
 
 # Write dummy file to 'Processed' folder to signal completion of script
 Write-Output "The existence of this file indicates the script has been run until the end." | Out-File "$scriptDir\03_Done\$currentDateTime\Completion_Script" -Force
+
+# Stop logging
+Stop-Transcript

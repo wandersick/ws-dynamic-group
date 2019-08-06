@@ -9,6 +9,11 @@
 * Specify group name at the top variable section of the script
 * Apply the changes (addition/deletion) to system accordingly, either locally (workgroup) or on a domain controller (Active Directory)
    * There is support for both local (workgroup) and domain (Active Directory) environments (See [More Settings](#More-Settings) section below)
+* Support three types of logging
+  * 'Before' and 'after' lists of users under `03_Done` directory, saved separately for each execution
+  * Console output logging of everything displayed to a file named using the date time of each execution under script log directory: `_log\Executions\console_log-<current_date_time>.log` using `Start-Transcript` of PowerShell
+    * 6 columns: `date time directory_mode group action account`
+  * Central action logging of additions and deletions, appending to the same CSV file under script log directory: `_log\action_log-<group_name>.csv`
 
 For details, see [Detailed Flow](#Detailed-Flow) section below.
 
@@ -64,11 +69,27 @@ Note:
 * Group name has to be specified at the top variable section of the script with the customGroupName variable
   * Only one group name is supported per script
 
+# Central Action Log File Schema
+
+ ```
+date,time,directory_mode,group,action,account
+20190805,015512AM,Domain,students,Deletion,testuser01
+20190806,035503PM,Local,tutors,Addition,testtutor01
+```
+
+Where date and time of all records in each execution are equal to the execution time of the script
+
 # Folder Structure
 
 The zip file should be extracted to below directory, so that the below folder structure is built:
 ```c
 C:\ws-dynamic-group
+│
+├───_log
+│   │   action_log-<group_name>.log // appendable central action log file of addition and deletion actions in CSV (one file per group)
+│   │
+│   └───Executions
+│           console_log-<date_time>.log // console output logging of everything displayed (one file per execution)
 │
 ├───01_Incoming
 │       incoming.csv // manually defined ('static' CSV input mode) or generated live (dynamic 'LDAP' input mode)
@@ -77,14 +98,14 @@ C:\ws-dynamic-group
 │
 ├───03_Done
 │   │
-│   └───20190312_030304PM
+│   └───<date_time> // e.g. 20190312_030304PM
 │           Completed // indication of completion of script
-|           Completed_Backup_(Before) // indication of completion of script section: Backup (before)
-|           Completed_Main_Logic // indication of completion of script section: Main Logic
-|           Completed_Main_Logic-User_Addition // indication of completion of script section: Main Logic - User Addition
-|           Completed_Main_Logic-User_Deletion // indication of completion of script section: Main Logic - User Deletion
-|           Completed_Main_Logic-SKIPPED_User_Deletion // indication of skipping of script section: Main Logic - User Deletion
-|           Completed_Backup_(After) // indication of completion of script section: Backup (After)
+│           Completed_Backup_(Before) // indication of completion of script section: Backup (before)
+│           Completed_Main_Logic // indication of completion of script section: Main Logic
+│           Completed_Main_Logic-User_Addition // indication of completion of script section: Main Logic - User Addition
+│           Completed_Main_Logic-User_Deletion // indication of completion of script section: Main Logic - User Deletion
+│           Completed_Main_Logic-SKIPPED_User_Deletion // indication of skipping of script section: Main Logic - User Deletion
+│           Completed_Backup_(After) // indication of completion of script section: Backup (After)
 │           incoming.csv
 │           Domain|LocalGroupMemberAfter_full-time students.csv // optional: if enabled ($backupAfter is $true)
 │           Domain|LocalGroupMemberAfter_tutors.csv // optional: as above
@@ -314,6 +335,12 @@ ws-dynamic-group.ps1 -csvPath "C:\Folder\File.csv" -groupName "tutors" -force $t
 ```
 
 # Release Notes
+
+* Version 2.2 - 20190808
+    * Add console output log file under script log directory: `_log\Executions\console_log-<current_date_time>.log` achieved using Start-Transcript PowerShell cmdlet
+    * Add (appendable) central action log file in CSV format under script log directory: `_log\action_log-<group_name>.csv` with actions "Addition" and "Deletion" recorded
+      * 6 columns are in the central action log file (CSV): `date time directory_mode group action account`
+    * Set `$PSScriptRoot` as script root (where the script can be placed and executed anywhere)
 
 * Version 2.1 - 20190604
     * Pre-check before user deletion to avoid mistake of deleting a massive number of users
