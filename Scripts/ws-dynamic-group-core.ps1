@@ -240,7 +240,7 @@ if ($backupBefore -eq $true) {
 if ($mainLogic -eq $true) {
     if ($userAddition -eq $true) {
         # Current action for logging - "Addition" or "Deletion"
-        currentAction = "Addition"
+        $currentAction = "Addition"
 
         # Take action on users who only exist in the CSV
         if ($directoryMode -ieq "Local") {
@@ -279,7 +279,7 @@ if ($mainLogic -eq $true) {
 if ($mainLogic -eq $true) {
     if ($userDeletion -eq $true) {
         # Current action for logging - "Addition" or "Deletion"
-        currentAction = "Deletion"
+        $currentAction = "Deletion"
 
         # Take action on users who only exist in the system but not in CSV
         if ($directoryMode -ieq "Local") {
@@ -302,7 +302,7 @@ if ($mainLogic -eq $true) {
                     # Todo*: Add-LocalGroupMember -Group "" -Member ""
                     net localgroup `"$customGroupName`" `"$beingDeletedUser`" /del
                     # Append to central action log file (CSV)
-                    Write-Output "$currentDate,$currentTime,$directoryMode,$customGroupName,$currentAction,$beingAddedUser" >> $logPath
+                    Write-Output "$currentDate,$currentTime,$directoryMode,$customGroupName,$currentAction,$beingDeletedUser" >> $logPath
                 } elseif ($directoryMode -ieq "Domain") {
                     # Todo*: Add-ADGroupMember -Identity "" -Members ""
                     net group `"$customGroupName`" `"$beingDeletedUser`" /del
@@ -310,7 +310,7 @@ if ($mainLogic -eq $true) {
                     #  Although this works, I left it as a todo for this part to be written in PowerShell without the workaround
 
                     # Append to central action log file (CSV)
-                    Write-Output "$currentDate,$currentTime,$directoryMode,$customGroupName,$currentAction,$beingAddedUser" >> $logPath
+                    Write-Output "$currentDate,$currentTime,$directoryMode,$customGroupName,$currentAction,$beingDeletedUser" >> $logPath
                 }
             }
             # Write dummy file to 'Processed' folder to signal completion of main logic - user deletion

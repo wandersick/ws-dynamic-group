@@ -336,7 +336,11 @@ ws-dynamic-group.ps1 -csvPath "C:\Folder\File.csv" -groupName "tutors" -force $t
 
 # Release Notes
 
-* Version 2.2 - 20190808
+* Version 2.3 - 20190808
+    * Fix display bug of currentAction variable in CSV log file
+    * Fix deletion action not being logged
+
+* Version 2.2 - 20190806
     * Add console output log file under script log directory: `_log\Executions\console_log-<current_date_time>.log` achieved using Start-Transcript PowerShell cmdlet
     * Add (appendable) central action log file in CSV format under script log directory: `_log\action_log-<group_name>.csv` with actions "Addition" and "Deletion" recorded
       * 6 columns are in the central action log file (CSV): `date time directory_mode group action account`
