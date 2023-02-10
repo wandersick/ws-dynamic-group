@@ -30,13 +30,14 @@ Refer to [Flow](#flow-of-the-script) section for more details.
 ## Quick Start
 
 1. Store the script with its complete [directory structure](#Directory-Structure) in a location specified in the script (Default: C:\ws-dynamic-group)
-2. Create '01_Incoming\entrant.csv' according to the section [CSV File Schema](#CSV-File-Schema).
+2. Create '01_Incoming\incoming.csv' according to the section [CSV File Schema](#CSV-File-Schema).
 3. In Windows Task Scheduler, create a task that runs `ws-dynamic-group.ps1`
 
 ### Command Example
 
 ```PowerShell
-ws-dynamic-group.ps1 -csvPath "C:\Folder\File.csv" -groupName "managers" -force $true
+# Be sure to create the group (domain or local group) beforehand, e.g. in the example below, "managers".
+ws-dynamic-group.ps1 -csvPath "C:\ws-dynamic-group\01_Incoming\incoming.csv" -groupName "managers" -force $true
 ```
 
 Refer to [Script Settings](#script-settings) section for details about the syntax and in-script settings.
